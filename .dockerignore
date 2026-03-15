@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+infra/
+tests/
+test_deployed.py
+.env
+*/.env
+*.md
+Makefile
+Dockerfile
+.dockerignore

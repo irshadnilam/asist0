@@ -1,0 +1,6 @@
+name: asisto-infra
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+description: Asisto Agent infrastructure on Google Cloud

@@ -1,0 +1,15 @@
+node_modules
+.output
+.nitro
+.tanstack
+.vinxi
+.git
+.gitignore
+.vscode
+.env
+Dockerfile*
+.dockerignore
+README.md
+LICENSE
+*.local
+.DS_Store

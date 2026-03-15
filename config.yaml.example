@@ -1,0 +1,35 @@
+# Asisto Deployment Configuration
+# Copy this to config.yaml and fill in your values.
+# DO NOT commit config.yaml to git -- it's in .gitignore.
+
+gcp:
+  project_id: "asista-hackathon"
+  region: "us-central1"
+
+agent_engine:
+  # After running `adk deploy agent_engine`, paste the resource ID here.
+  # Example: if the output says:
+  #   projects/875791790592/locations/us-central1/reasoningEngines/2439436970523361280
+  # then set resource_id to "2439436970523361280"
+  resource_id: ""
+
+cloud_run:
+  service_name: "asisto-api"
+  min_instances: 0
+  max_instances: 5
+
+frontend:
+  service_name: "asisto-app"
+  min_instances: 0
+  max_instances: 3
+
+# Custom domains (optional). Leave empty to skip domain mapping.
+# Requires domain verification: https://www.google.com/webmasters/verification/
+# After deploying, create CNAME records pointing to ghs.googlehosted.com.
+domains:
+  frontend: ""  # e.g., "asisto.agents.sh"
+  api: ""       # e.g., "asisto-api.agents.sh"
+
+agent:
+  model: "gemini-live-2.5-flash-native-audio"
+  display_name: "Asisto Agent"
