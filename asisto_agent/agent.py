@@ -1,83 +1,63 @@
-import datetime
+"""Asisto Agent — voice-first AI assistant with visual UI rendering.
+
+The root agent handles voice via Gemini Live API (native audio model).
+When the user asks to see something visual, it delegates to the ui_renderer
+agent via AgentTool. The ui_renderer uses gemini-3-flash-preview for reliable
+structured tool calls to build A2UI surfaces.
+
+State flow:
+  voice agent -> AgentTool(ui_renderer) -> update_ui tool -> state["a2ui"]
+  -> state_delta propagated back -> backend forwards to frontend via WebSocket
+"""
+
 import os
-from zoneinfo import ZoneInfo
+
 from google.adk.agents import Agent
+from google.adk.tools.agent_tool import AgentTool
 
-
-def get_current_time(timezone: str = "UTC") -> dict:
-    """Returns the current date and time for a given timezone.
-
-    Args:
-        timezone (str): The IANA timezone name (e.g., "America/New_York",
-                        "Europe/London", "Asia/Colombo"). Defaults to "UTC".
-
-    Returns:
-        dict: status and result or error msg.
-    """
-    try:
-        tz = ZoneInfo(timezone)
-        now = datetime.datetime.now(tz)
-        return {
-            "status": "success",
-            "report": (
-                f"The current date and time in {timezone} is "
-                f"{now.strftime('%Y-%m-%d %H:%M:%S %Z')}"
-            ),
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "error_message": f"Could not get time for timezone '{timezone}': {e}",
-        }
-
-
-def do_math(expression: str) -> dict:
-    """Evaluates a mathematical expression safely.
-
-    Args:
-        expression (str): A mathematical expression to evaluate
-                          (e.g., "2 + 2", "sqrt(16)", "15 * 3.14").
-
-    Returns:
-        dict: status and result or error msg.
-    """
-    import math
-
-    allowed_names = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
-    allowed_names["abs"] = abs
-    allowed_names["round"] = round
-    allowed_names["min"] = min
-    allowed_names["max"] = max
-
-    try:
-        result = eval(expression, {"__builtins__": {}}, allowed_names)
-        return {
-            "status": "success",
-            "result": str(result),
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "error_message": f"Could not evaluate '{expression}': {e}",
-        }
+from .ui_agent import ui_agent
 
 
 # Live API compatible model for Vertex AI
 # Override with ASISTO_AGENT_MODEL env var if needed
 LIVE_MODEL = os.getenv("ASISTO_AGENT_MODEL", "gemini-live-2.5-flash-native-audio")
 
+
+VOICE_INSTRUCTION = """\
+You are Asisto, a helpful and friendly AI assistant with voice and visual capabilities.
+You speak naturally and conversationally.
+
+# CRITICAL RULE: Using ui_renderer
+
+You MUST call the ui_renderer tool whenever the user asks to show, display, list,
+compare, or visualize ANY information. Do NOT pretend you displayed something —
+you MUST actually invoke the tool. The user can see whether the UI appeared or not.
+
+If the user says "show me", "list", "display", "compare", or anything visual,
+you MUST call ui_renderer. No exceptions.
+
+## How to call ui_renderer
+Call it with a detailed request describing what to display. Include ALL the data.
+
+Examples:
+- ui_renderer(request="Show a numbered list of the top 10 countries by GDP: 1. United States - $25.5T, 2. China - $18T, ...")
+- ui_renderer(request="Display a card showing Tokyo weather: sunny, 25°C, humidity 60%, wind 10km/h")
+- ui_renderer(request="Show a comparison of Python vs JavaScript vs Go with columns for typing, speed, and use cases")
+
+Be specific — include the actual data in your request, not just the topic.
+
+## When NOT to use ui_renderer
+- Simple conversational replies — just speak
+- Quick yes/no answers, greetings, small talk
+"""
+
+
 root_agent = Agent(
     name="asisto_agent",
     model=LIVE_MODEL,
-    description="A general-purpose AI assistant with voice and text support.",
-    instruction=(
-        "You are Asisto, a helpful and friendly AI assistant. "
-        "You can answer general knowledge questions, help with math calculations, "
-        "and tell the current time in any timezone. "
-        "Be concise but thorough in your responses. "
-        "If the user asks about the time, use the get_current_time tool. "
-        "If the user asks for math calculations, use the do_math tool. "
-        "For general questions, answer directly using your knowledge."
-    ),
-    tools=[get_current_time, do_math],
+    description="A voice-first AI assistant that can render rich interactive UIs.",
+    instruction=VOICE_INSTRUCTION,
+    tools=[
+        AgentTool(agent=ui_agent, skip_summarization=True),
+    ],
 )

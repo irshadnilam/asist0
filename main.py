@@ -74,23 +74,17 @@ os.environ.setdefault("GOOGLE_CLOUD_LOCATION", LOCATION)
 
 APP_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/reasoningEngines/{ENGINE_ID}"
 
-# Configure logging
+# Configure logging — root at WARNING to silence SDK noise,
+# our logger at INFO to see A2UI state deltas and errors.
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.WARNING,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Suppress Pydantic serialization warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
-
-# Suppress harmless BaseApiClient.aclose() error from google-genai SDK.
-# The SDK tries to close an async httpx client that was never initialized
-# when using the Live API transport (bidirectional streaming).
-logging.getLogger("google.genai._api_client").setLevel(logging.CRITICAL)
-logging.getLogger("asyncio").addFilter(
-    lambda record: "_async_httpx_client" not in record.getMessage()
-)
 
 # --- FastAPI App ---
 app = FastAPI(title="Asisto Agent API")
@@ -125,7 +119,7 @@ async def get_current_user(
 
 
 # --- Vertex AI Services ---
-session_service = VertexAiSessionService(project=PROJECT_ID, location=LOCATION)
+session_service = VertexAiSessionService(project=PROJECT_ID, location=LOCATION, agent_engine_id=ENGINE_ID)
 memory_service = VertexAiMemoryBankService(
     project=PROJECT_ID,
     location=LOCATION,
@@ -157,6 +151,7 @@ async def create_workspace(user_id: str = Depends(get_current_user)):
     session = await session_service.create_session(
         app_name=APP_NAME,
         user_id=user_id,
+        state={"a2ui": {"surfaces": {}}},
     )
     return CreateWorkspaceResponse(workspace_id=session.id)
 
@@ -242,11 +237,8 @@ async def websocket_endpoint(
         await websocket.close(code=4001, reason=f"Invalid token: {e}")
         return
 
-    logger.debug(
-        f"WebSocket connection request: user_id={user_id}, workspace_id={workspace_id}"
-    )
+    logger.info(f"WebSocket connected: user_id={user_id}, workspace_id={workspace_id}")
     await websocket.accept()
-    logger.debug("WebSocket connection accepted")
 
     # --- Determine response modality based on model ---
     model_name = root_agent.model
@@ -260,14 +252,12 @@ async def websocket_endpoint(
             output_audio_transcription=types.AudioTranscriptionConfig(),
             session_resumption=types.SessionResumptionConfig(),
         )
-        logger.debug(f"Native audio model: {model_name}, using AUDIO response modality")
     else:
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["TEXT"],
             session_resumption=types.SessionResumptionConfig(),
         )
-        logger.debug(f"Half-cascade model: {model_name}, using TEXT response modality")
 
     # --- Get or create session (workspace_id maps to ADK session_id) ---
     session = await session_service.get_session(
@@ -284,14 +274,12 @@ async def websocket_endpoint(
 
     async def upstream_task() -> None:
         """Receives messages from WebSocket and forwards to LiveRequestQueue."""
-        logger.debug("upstream_task started")
         while True:
             message = await websocket.receive()
 
             # Binary frames = audio data (PCM 16kHz 16-bit)
             if "bytes" in message:
                 audio_data = message["bytes"]
-                logger.debug(f"Received audio chunk: {len(audio_data)} bytes")
                 audio_blob = types.Blob(
                     mime_type="audio/pcm;rate=16000", data=audio_data
                 )
@@ -300,7 +288,6 @@ async def websocket_endpoint(
             # Text frames = JSON messages (text or image)
             elif "text" in message:
                 text_data = message["text"]
-                logger.debug(f"Received text message: {text_data[:100]}...")
                 json_message = json.loads(text_data)
 
                 if json_message.get("type") == "text":
@@ -312,14 +299,20 @@ async def websocket_endpoint(
                 elif json_message.get("type") == "image":
                     image_data = base64.b64decode(json_message["data"])
                     mime_type = json_message.get("mimeType", "image/jpeg")
-                    logger.debug(
-                        f"Received image: {len(image_data)} bytes, type: {mime_type}"
-                    )
                     image_blob = types.Blob(mime_type=mime_type, data=image_data)
                     live_request_queue.send_realtime(image_blob)
 
     async def downstream_task() -> None:
-        """Receives Events from run_live(), filters, and sends to WebSocket."""
+        """Receives Events from run_live(), filters, and sends to WebSocket.
+
+        Only forwards user-facing data: audio, text, transcriptions,
+        turnComplete, interrupted. Strips out function calls, function
+        responses, and agent-delegation internals.
+
+        Also intercepts state_delta for A2UI messages and forwards them
+        as separate WebSocket frames so the frontend renderer can process
+        them independently from audio/text events.
+        """
         async for event in runner.run_live(
             user_id=user_id,
             session_id=workspace_id,
@@ -329,25 +322,83 @@ async def websocket_endpoint(
             event_payload = json.loads(
                 event.model_dump_json(exclude_none=True, by_alias=True)
             )
-            if any(key in event_payload for key in _FORWARD_KEYS):
-                has_audio = any(
-                    "inlineData" in p
-                    for p in event_payload.get("content", {}).get("parts", [])
+
+            # Debug: log every event's top-level keys and content part types
+            event_keys = sorted(event_payload.keys())
+            parts = event_payload.get("content", {}).get("parts", [])
+            part_types = [list(p.keys()) for p in parts] if parts else []
+            # Skip logging pure audio events (just inlineData)
+            is_pure_audio = parts and all(
+                set(p.keys()) <= {"inlineData"} for p in parts
+            )
+            if not is_pure_audio:
+                logger.info(f"[event] keys={event_keys} parts={part_types}")
+
+            # --- A2UI: intercept state_delta with "a2ui" key ---
+            # The a2ui state is a full snapshot: {"surfaces": {id: {components, dataModel}}}
+            # We forward it as a special message type so the frontend can sync its store.
+            state_delta = event_payload.get("actions", {}).get(
+                "stateDelta"
+            ) or event_payload.get("actions", {}).get("state_delta")
+            if state_delta and "a2ui" in state_delta:
+                a2ui_state = state_delta["a2ui"]
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "a2ui_state",
+                            "state": a2ui_state,
+                        }
+                    )
                 )
-                if has_audio:
-                    logger.info("[downstream] sending audio chunk to client")
-                await websocket.send_text(json.dumps(event_payload))
+                logger.info(
+                    f"[downstream] forwarded A2UI state: "
+                    f"{list(a2ui_state.get('surfaces', {}).keys()) if isinstance(a2ui_state, dict) else '?'}"
+                )
+
+            # --- Filter content.parts: drop functionCall / functionResponse ---
+            if "content" in event_payload:
+                parts = event_payload["content"].get("parts", [])
+                # Keep only parts that have text or inlineData (audio)
+                clean_parts = [p for p in parts if "text" in p or "inlineData" in p]
+                if not clean_parts:
+                    # All parts were tool internals — skip the content key
+                    del event_payload["content"]
+                else:
+                    event_payload["content"]["parts"] = clean_parts
+
+            # --- Build the forwarded message with only client-relevant keys ---
+            msg = {}
+            for key in _FORWARD_KEYS:
+                if key in event_payload:
+                    msg[key] = event_payload[key]
+
+            if not msg:
+                continue
+
+            # Log complete transcriptions only
+            if "inputTranscription" in msg:
+                t = msg["inputTranscription"]
+                if isinstance(t, dict) and t.get("finished"):
+                    logger.info(f"[user] {t.get('text', '')}")
+                elif isinstance(t, str):
+                    logger.info(f"[user] {t}")
+            if "outputTranscription" in msg:
+                t = msg["outputTranscription"]
+                if isinstance(t, dict) and t.get("finished"):
+                    logger.info(f"[agent] {t.get('text', '')}")
+                elif isinstance(t, str):
+                    logger.info(f"[agent] {t}")
+
+            await websocket.send_text(json.dumps(msg))
 
     # Run both tasks concurrently
     try:
-        logger.debug("Starting upstream and downstream tasks")
         await asyncio.gather(upstream_task(), downstream_task())
     except (WebSocketDisconnect, RuntimeError):
-        logger.debug("Client disconnected")
+        pass
     except Exception as e:
         logger.error(f"Error in streaming tasks: {e}", exc_info=True)
     finally:
-        logger.debug("Closing live_request_queue")
         live_request_queue.close()
 
 

@@ -1,193 +1,185 @@
 # Asisto
 
-A real-time AI voice and text assistant built with [Google ADK](https://google.github.io/adk-docs/) and the Gemini Live API. Features bidirectional WebSocket streaming, persistent sessions via Vertex AI Agent Engine, and long-term memory.
+A voice-first AI assistant built with [Google ADK](https://google.github.io/adk-docs/) (Agent Development Kit) and the Gemini Live API. Features real-time bidirectional voice streaming, a multi-agent architecture for visual UI rendering, persistent sessions, and long-term memory -- all deployed to Google Cloud.
 
-## Features
+## Highlights
 
-- **Bidirectional streaming** -- real-time voice and text via WebSocket (Gemini Live API)
-- **Persistent sessions** -- conversations survive restarts via Vertex AI Session Service
-- **Long-term memory** -- agent recalls past conversations via Vertex AI Memory Bank
-- **Firebase Auth** -- Google Sign-In, backend verifies Firebase ID tokens
-- **Built-in tools** -- current time (any timezone) and math calculations
-- **Cloud Run deployment** -- containerized FastAPI service with Pulumi IaC
+- **Multi-agent system** -- Voice agent (Gemini Live native audio) delegates to a UI agent (Gemini 2.5 Flash) via ADK's `AgentTool` for reliable structured output
+- **Bidirectional voice streaming** -- Real-time audio via WebSocket and Gemini Live API (`run_live` with `BIDI` streaming mode)
+- **A2UI protocol** -- Agent renders rich interactive UIs (cards, lists, layouts) in the user's workspace through session state
+- **Session state as source of truth** -- UI state lives in ADK session state, persists via Vertex AI Session Service, and syncs to the frontend in real time
+- **Long-term memory** -- Agent recalls past conversations via Vertex AI Memory Bank
+- **Firebase Auth** -- Google Sign-In with token verification on every request
+- **IDE-like dark UI** -- WebGL orb interface, animated transitions, JetBrains Mono, GitHub-dark palette
+
+## Architecture
+
+```
+Browser                              Cloud Run (FastAPI + ADK)
++-------------------+               +----------------------------------+
+| WebGL Orb         |               |  Voice Agent (Live API)          |
+| Audio I/O         |--WebSocket--->|  gemini-live-2.5-flash-native-   |
+| A2UI Renderer     |<--WebSocket---|  audio                           |
+| (Zustand + React) |               |     |                            |
++-------------------+               |     | AgentTool                  |
+                                    |     v                            |
+                                    |  UI Agent (run_async)            |
+                                    |  gemini-2.5-flash                |
+                                    |     |                            |
+                                    |     | update_ui tool             |
+                                    |     v                            |
+                                    |  Session State ["a2ui"]          |
+                                    |     |                            |
+                                    |     | state_delta                |
+                                    |     v                            |
+                                    |  WebSocket -> Frontend           |
+                                    +----------------------------------+
+```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a deep dive on ADK usage, multi-agent patterns, state management, and the A2UI protocol.
+
+## ADK Features Used
+
+| Feature | How It's Used |
+|---------|---------------|
+| **Multi-Agent (AgentTool)** | Voice agent wraps UI agent as a tool for explicit invocation |
+| **Gemini Live API (run_live)** | Bidirectional audio streaming with native voice model |
+| **Session State** | `a2ui` key holds full UI state, triggers `state_delta` for real-time sync |
+| **InstructionProvider** | Dynamic system prompts inject current UI state each turn |
+| **FunctionTool** | `update_ui` tool applies A2UI messages to session state |
+| **VertexAiSessionService** | Persistent sessions backed by Agent Engine |
+| **VertexAiMemoryBankService** | Long-term memory across sessions |
+| **RunConfig** | Configures BIDI streaming, audio modality, transcription, session resumption |
+| **Event filtering** | Backend strips tool internals, forwards only user-facing data |
 
 ## Tech Stack
 
-- **Agent framework**: Google ADK (Agent Development Kit)
-- **Model**: `gemini-live-2.5-flash-native-audio` (Vertex AI)
-- **Backend**: FastAPI + Uvicorn
-- **Frontend**: TanStack Start (React 19) + Bun + Tailwind v4
-- **Infrastructure**: Pulumi (Python), Docker, Cloud Run
-- **Services**: Vertex AI Agent Engine (sessions + memory), Firebase Auth
-
-## Authentication
-
-All API endpoints require a Firebase ID token in the `Authorization: Bearer <token>` header.
-The frontend handles Google Sign-In via Firebase Auth and passes the token through server functions.
-WebSocket connections pass the token as a `?token=` query parameter.
+| Layer | Technology |
+|-------|-----------|
+| Agent Framework | Google ADK (Python) |
+| Voice Model | `gemini-live-2.5-flash-native-audio` (Vertex AI) |
+| UI Model | `gemini-2.5-flash` (Vertex AI) |
+| Backend | FastAPI + Uvicorn |
+| Frontend | TanStack Start (React 19) + Bun + Tailwind v4 |
+| UI State | Zustand with A2UI protocol |
+| Auth | Firebase Authentication (Google Sign-In) |
+| Sessions | Vertex AI Agent Engine (Session Service + Memory Bank) |
+| Infrastructure | Pulumi (Python), Docker, Cloud Run |
+| Domains | `asisto.agents.sh`, `asisto-api.agents.sh` |
 
 ## Project Structure
 
 ```
 asisto/
-├── app/                            # Frontend (TanStack Start + Bun)
+├── asisto_agent/                    # ADK agent package
+│   ├── agent.py                     # Voice agent -- Live API, AgentTool(ui_renderer)
+│   ├── ui_agent.py                  # UI agent -- gemini-2.5-flash, InstructionProvider, update_ui
+│   ├── tools.py                     # update_ui FunctionTool -- applies A2UI to session state
+│   └── __init__.py
+├── app/                             # Frontend (TanStack Start + Bun)
 │   ├── src/
-│   │   ├── routes/                 # File-based routing
-│   │   │   ├── __root.tsx          # Root layout with status bar
-│   │   │   ├── index.tsx           # / — redirects to /app or /sign-in
-│   │   │   ├── sign-in/            # Google Sign-In page
-│   │   │   └── app/
-│   │   │       ├── index.tsx       # Workspace list
-│   │   │       └── $workspaceId.tsx # Workspace view (orb + audio streaming)
-│   │   ├── lib/                    # Hooks and utilities
-│   │   │   ├── api.ts              # Server functions (REST proxy to backend)
-│   │   │   ├── firebase.ts         # Firebase init + Google auth provider
-│   │   │   ├── useAuth.tsx         # Auth context provider + hook
-│   │   │   ├── useAgentSocket.ts   # WebSocket client (direct to backend)
-│   │   │   ├── useAudioCapture.ts  # Mic capture (AudioWorklet, 16kHz PCM)
-│   │   │   └── useAudioPlayback.ts # Speaker playback (pcm-player, 24kHz PCM)
+│   │   ├── a2ui/                    # A2UI v0.9 renderer
+│   │   │   ├── store.ts             # Zustand store -- surfaces, syncFromState
+│   │   │   ├── types.ts             # Full A2UI protocol TypeScript types
+│   │   │   ├── tree.ts              # Flat adjacency list -> renderable tree
+│   │   │   ├── registry.ts          # Component type -> React renderer map
+│   │   │   ├── SurfaceRenderer.tsx   # Top-level renderer with useShallow
+│   │   │   └── components/          # Text, Row, Column, Card, Button, Image, Divider, Icon
+│   │   ├── lib/
+│   │   │   ├── useAgentSocket.ts    # WebSocket client (handles a2ui_state messages)
+│   │   │   ├── useAudioCapture.ts   # Mic capture (AudioWorklet, 16kHz PCM)
+│   │   │   ├── useAudioPlayback.ts  # Speaker playback (pcm-player, 24kHz)
+│   │   │   ├── useAuth.tsx          # Firebase Auth provider + hook
+│   │   │   ├── api.ts               # TanStack Start server functions
+│   │   │   └── firebase.ts          # Firebase init
 │   │   ├── components/
-│   │   │   └── Orb.tsx             # WebGL orb (ogl) — tap to toggle voice
-│   │   ├── router.tsx              # TanStack Router setup
-│   │   └── styles.css              # Tailwind + IDE dark theme
-│   ├── public/
-│   │   └── capture-processor.js    # Mic AudioWorklet (float32 → int16)
-│   ├── package.json                # Bun dependencies
-│   ├── vite.config.ts              # Vite + TanStack Start + Nitro (bun preset)
-│   ├── Dockerfile                  # Container image for Cloud Run (oven/bun)
-│   ├── .env                        # API_ENDPOINT config (gitignored)
-│   └── .env.example                # Env template (committed)
-├── asisto_agent/                   # Agent package
-│   ├── __init__.py                 # Package init
-│   ├── agent.py                    # Agent definition, tools, model config
-│   └── .env                        # Vertex AI runtime config (gitignored)
-├── infra/                          # Pulumi infrastructure (Python)
-│   ├── Pulumi.yaml                 # Pulumi project config
-│   ├── __main__.py                 # GCP APIs, Artifact Registry, Cloud Run (backend + frontend)
-│   └── requirements.txt            # Pulumi Python dependencies
-├── main.py                         # FastAPI server with WebSocket + REST endpoints
-├── config.yaml                     # Deployment config: project, region, engine ID (gitignored)
-├── config.yaml.example             # Config template (committed)
-├── Dockerfile                      # Backend container image for Cloud Run
-├── .dockerignore                   # Docker build exclusions
-├── Makefile                        # Build, deploy, and dev commands
-├── pyproject.toml                  # Python dependencies (managed by uv)
-├── DEPLOYMENT.md                   # Full deployment guide
-└── LICENSE                         # MIT License
+│   │   │   └── Orb.tsx              # WebGL orb (ogl) with center<->corner animation
+│   │   └── routes/
+│   │       └── app/
+│   │           ├── index.tsx        # Workspace list with delete
+│   │           └── $workspaceId.tsx  # Workspace view -- orb, audio, A2UI
+│   └── public/
+│       └── capture-processor.js     # AudioWorklet (float32 -> int16)
+├── infra/                           # Pulumi IaC (Python)
+│   └── __main__.py                  # Cloud Run, Artifact Registry, domain mappings
+├── main.py                          # FastAPI -- WebSocket streaming, REST, event filtering
+├── config.yaml                      # Central config (project, region, engine ID)
+├── Dockerfile                       # Backend container
+├── Makefile                         # Build, deploy, dev commands
+├── pyproject.toml                   # Python dependencies (uv)
+├── ARCHITECTURE.md                  # Deep dive on ADK usage and system design
+├── DEPLOYMENT.md                    # Full deployment guide
+└── LICENSE                          # MIT
 ```
 
-## API Endpoints
+## API
 
 ### REST (Workspace Management)
 
-All endpoints require `Authorization: Bearer <firebase-id-token>` header.
-The user ID is extracted from the token server-side.
+All endpoints require `Authorization: Bearer <firebase-id-token>`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/workspaces` | Create a new workspace |
-| `GET` | `/workspaces` | List all workspace IDs for the authenticated user |
-| `GET` | `/workspaces/{workspace_id}` | Get a workspace by ID |
-| `DELETE` | `/workspaces/{workspace_id}` | Delete a workspace |
+| `GET` | `/workspaces` | List workspace IDs |
+| `GET` | `/workspaces/{id}` | Get workspace |
+| `DELETE` | `/workspaces/{id}` | Delete workspace |
 
 ### WebSocket (Live Streaming)
 
-| Protocol | Endpoint | Description |
-|----------|----------|-------------|
-| `WS` | `/ws/{workspace_id}?token=<firebase-id-token>` | Bidirectional streaming (voice + text) |
+`WS /ws/{workspace_id}?token=<firebase-id-token>`
 
-#### WebSocket Message Format
-
-**Text (client -> server):**
-```json
-{"type": "text", "text": "What time is it in Colombo?"}
-```
-
-**Image (client -> server):**
-```json
-{"type": "image", "data": "base64_encoded_data", "mimeType": "image/jpeg"}
-```
-
-**Audio (client -> server):**
-Raw binary frames -- PCM audio, 16kHz, 16-bit.
-
-**Events (server -> client):**
-Filtered JSON-encoded ADK Event objects. Only the following event types are sent:
-
-| Event | Description |
-|-------|-------------|
-| Text response | Agent's text reply (`content.parts[].text`) |
-| Audio response | Raw audio chunks (`content.parts[].inlineData`, base64 URL-safe encoded PCM int16) |
-| Input transcription | User's speech-to-text (`inputTranscription`) |
-| Output transcription | Agent's audio-to-text (`outputTranscription`) |
-| Turn complete | Agent finished responding (`turnComplete: true`) |
-| Interrupted | User interrupted agent (`interrupted: true`) |
-
-Internal events (function calls, tool results, usage metadata, state changes) are filtered out.
+| Direction | Format | Description |
+|-----------|--------|-------------|
+| Client -> Server | JSON `{"type": "text", "text": "..."}` | Text message |
+| Client -> Server | Binary (PCM 16kHz 16-bit) | Audio |
+| Server -> Client | JSON with `content`, `turnComplete`, `interrupted` | Agent response |
+| Server -> Client | JSON with `inputTranscription` / `outputTranscription` | Transcriptions |
+| Server -> Client | JSON `{"type": "a2ui_state", "state": {...}}` | UI state sync |
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.13+
-- [uv](https://docs.astral.sh/uv/)
-- [Bun](https://bun.sh/) (frontend runtime)
+- Python 3.13+ with [uv](https://docs.astral.sh/uv/)
+- [Bun](https://bun.sh/)
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) (authenticated)
-- A Google Cloud project with Vertex AI API enabled
+- Google Cloud project with Vertex AI API enabled
 
 ### Local Development
 
 ```bash
-# Install Python dependencies
+# Install dependencies
 uv sync
-
-# Install frontend dependencies
 cd app && bun install && cd ..
 
-# Configure environment
+# Configure
 cp config.yaml.example config.yaml
-# Edit config.yaml with your GCP project ID and Agent Engine resource ID
+# Edit config.yaml: set project_id and agent_engine resource_id
 
 cp app/.env.example app/.env
-# Edit app/.env if needed (defaults to API_ENDPOINT=http://localhost:8080)
 
-# Run both backend (port 8080) and frontend (port 3000) concurrently
+# Run backend (8080) + frontend (3000)
 make dev
 ```
 
-The backend starts at `http://localhost:8080`. Swagger docs at `http://localhost:8080/docs`.
-The frontend starts at `http://localhost:3000`.
-
-### Available Make Commands
+### Make Commands
 
 ```
-make help            Show all commands
 make dev             Run backend + frontend concurrently
-make dev-api         Run FastAPI backend only
-make dev-adk         Run ADK web UI locally
-make dev-app         Run frontend dev server only
+make dev-api         Backend only
+make dev-app         Frontend only
 make deploy-agent    Deploy agent to Agent Engine
-make setup           First-time Pulumi setup
-make preview         Preview infrastructure changes
-make deploy-infra    Deploy backend + frontend to Cloud Run
-make deploy-frontend Deploy frontend only to Cloud Run
+make deploy-infra    Deploy to Cloud Run via Pulumi
 make deploy-all      Deploy agent + infrastructure
-make logs            View backend Cloud Run logs
-make logs-app        View frontend Cloud Run logs
+make logs            View backend logs
 make status          Check deployment status
-make destroy         Tear down infrastructure
 ```
 
 ## Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for the full deployment guide covering:
-
-- Google Cloud authentication
-- Agent Engine deployment
-- Backend + Frontend Cloud Run deployment with Pulumi
-- Configuration management
-- Updating and tearing down
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the full guide.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) -- Copyright 2026 Irshad Nilam

@@ -1,9 +1,11 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../lib/useAuth'
+import { deleteWorkspace } from '../../lib/api'
 import { useAgentSocket, type WsEvent, type WsStatus } from '../../lib/useAgentSocket'
 import { useAudioCapture } from '../../lib/useAudioCapture'
 import { useAudioPlayback } from '../../lib/useAudioPlayback'
+import { SurfaceRenderer, useA2UIStore } from '../../a2ui'
 
 const Orb = lazy(() => import('../../components/Orb'))
 
@@ -33,14 +35,27 @@ function WorkspaceView() {
   const navigate = useNavigate()
   const { user, loading: authLoading, idToken, signOut } = useAuth()
   const [orbActive, setOrbActive] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const orbActiveRef = useRef(false)
 
   // --- Audio playback (agent → speaker) ---
   const { play: playAudio, stop: stopPlayback, destroy: destroyPlayback, ensureInit: ensurePlaybackInit } = useAudioPlayback()
 
+  // --- A2UI store ---
+  const syncA2UIState = useA2UIStore((s) => s.syncFromState)
+  const clearA2UISurfaces = useA2UIStore((s) => s.clearAll)
+  const hasSurfaces = useA2UIStore((s) => s.surfaces.size > 0)
+
   // --- WebSocket ---
   const handleEvent = useCallback(
     (event: WsEvent) => {
+      // --- A2UI state sync from backend ---
+      // Backend sends: {"type": "a2ui_state", "state": {"surfaces": {...}}}
+      if (event.type === 'a2ui_state' && event.state) {
+        syncA2UIState(event.state as Record<string, unknown>)
+        return
+      }
+
       // Audio response: content.parts[].inlineData.data (base64 PCM int16)
       // Field names are camelCase (pydantic by_alias=True serialization)
       const content = event.content as
@@ -63,14 +78,26 @@ function WorkspaceView() {
         stopPlayback()
       }
     },
-    [playAudio, stopPlayback],
+    [playAudio, stopPlayback, syncA2UIState],
   )
 
-  const { status, connect, disconnect, sendAudio } = useAgentSocket({
+  const { status, connect, disconnect, sendAudio, sendText } = useAgentSocket({
     workspaceId,
     token: idToken,
     onEvent: handleEvent,
   })
+
+  // --- A2UI action handler (button clicks, form submissions, etc.) ---
+  const handleA2UIAction = useCallback(
+    (surfaceId: string, name: string, context?: Record<string, unknown>) => {
+      // Send action back to the agent via WebSocket as a JSON text message
+      sendText(JSON.stringify({
+        type: 'a2ui_action',
+        action: { surfaceId, name, context },
+      }))
+    },
+    [sendText],
+  )
 
   // --- Audio capture (mic → backend) ---
   const { start: startCapture, stop: stopCapture } = useAudioCapture({
@@ -101,13 +128,26 @@ function WorkspaceView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idToken, workspaceId])
 
-  // Clean up audio on unmount
+  // Clean up audio and A2UI on unmount
   useEffect(() => {
     return () => {
       stopCapture()
       destroyPlayback()
+      clearA2UISurfaces()
     }
-  }, [stopCapture, destroyPlayback])
+  }, [stopCapture, destroyPlayback, clearA2UISurfaces])
+
+  const handleDelete = useCallback(async () => {
+    if (!idToken || deleting) return
+    try {
+      setDeleting(true)
+      disconnect()
+      await deleteWorkspace({ data: { token: idToken, workspaceId } })
+      navigate({ to: '/app' })
+    } catch {
+      setDeleting(false)
+    }
+  }, [idToken, workspaceId, deleting, disconnect, navigate])
 
   const handleOrbToggle = useCallback(() => {
     const next = !orbActiveRef.current
@@ -151,6 +191,22 @@ function WorkspaceView() {
             {workspaceId}
           </span>
         </div>
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          className="flex items-center gap-1.5 text-xs text-[#484f58] transition hover:text-[#f85149] disabled:opacity-50"
+          title="Delete workspace"
+        >
+          <svg
+            className="h-3.5 w-3.5 fill-current"
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+          </svg>
+          {deleting ? 'deleting...' : 'delete'}
+        </button>
       </div>
 
       {/* Main content area */}
@@ -160,9 +216,15 @@ function WorkspaceView() {
           className="flex flex-1 flex-col transition-opacity duration-700 ease-out"
           style={{ opacity: orbActive ? 1 : 0, pointerEvents: orbActive ? 'auto' : 'none' }}
         >
-          <div className="flex flex-1 items-center justify-center">
-            <span className="text-sm text-[#484f58]">workspace ready</span>
-          </div>
+          {hasSurfaces ? (
+            <div className="flex-1 overflow-auto p-4">
+              <SurfaceRenderer onAction={handleA2UIAction} />
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center justify-center">
+              <span className="text-sm text-[#484f58]">workspace ready</span>
+            </div>
+          )}
         </div>
 
         {/* Orb container — centered when idle, top-right when active */}

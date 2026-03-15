@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createWorkspace, listWorkspaces } from '../../lib/api'
+import { createWorkspace, deleteWorkspace, listWorkspaces } from '../../lib/api'
 import { useAuth } from '../../lib/useAuth'
 import type { WorkspaceInfo } from '../../lib/api'
 
@@ -15,6 +15,7 @@ function WorkspaceList() {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [deleting, setDeleting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -68,6 +69,26 @@ function WorkspaceList() {
       setCreating(false)
     }
   }, [idToken, openWorkspace])
+
+  const handleDeleteWorkspace = useCallback(
+    async (e: React.MouseEvent, workspaceId: string) => {
+      e.stopPropagation() // Don't trigger row click (open)
+      if (!idToken) return
+      try {
+        setDeleting(workspaceId)
+        setError(null)
+        await deleteWorkspace({ data: { token: idToken, workspaceId } })
+        setWorkspaces((prev) => prev.filter((ws) => ws.workspace_id !== workspaceId))
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : 'Failed to delete workspace',
+        )
+      } finally {
+        setDeleting(null)
+      }
+    },
+    [idToken],
+  )
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -176,8 +197,29 @@ function WorkspaceList() {
                 </span>
                 <span className="font-medium">{ws.workspace_id}</span>
                 {index === selectedIndex && (
-                  <span className="ml-auto text-xs text-[#484f58]">
-                    enter to open
+                  <span className="ml-auto flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteWorkspace(e, ws.workspace_id)}
+                      disabled={deleting === ws.workspace_id}
+                      className="text-[#484f58] transition hover:text-[#f85149] disabled:opacity-50"
+                      title="Delete workspace"
+                    >
+                      {deleting === ws.workspace_id ? (
+                        <span className="text-xs">...</span>
+                      ) : (
+                        <svg
+                          className="h-3.5 w-3.5 fill-current"
+                          viewBox="0 0 24 24"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                        </svg>
+                      )}
+                    </button>
+                    <span className="text-xs text-[#484f58]">
+                      enter to open
+                    </span>
                   </span>
                 )}
               </div>
