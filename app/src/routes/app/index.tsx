@@ -285,20 +285,29 @@ function AppPage() {
       api.intercept('open-file', (ev: any) => {
         if (!ev.id) return false
 
-        // "Back to parent folder" link — navigate up
-        if (ev.id === '/wx-filemanager-parent-link') {
-          const nav = ev.navigation
-          if (nav) {
-            api.exec('set-path', { id: nav })
-          }
-          return false
-        }
-
         // Don't open folders as file viewers
         const match = allFilesRef.current.find((f: any) => f.id === ev.id)
         if (match?.type === 'folder') return false
         openFileRef.current(ev.id)
         return false
+      })
+
+      // SVAR's "Back to parent folder" link only navigates on double-click by default.
+      // Single click fires select-file with type:"navigation" (just highlights).
+      // Convert single-click into actual navigation so users don't have to double-click.
+      api.on('select-file', (ev: any) => {
+        if (ev.type === 'navigation') {
+          const state = api.getState()
+          const panel = state.activePanel ?? 0
+          const crumbs = state.panels?.[panel]?._crumbs
+          if (crumbs && crumbs.length > 1) {
+            api.exec('set-path', {
+              id: crumbs[crumbs.length - 2].id,
+              panel,
+              selected: [crumbs[crumbs.length - 1].id],
+            })
+          }
+        }
       })
 
       // Track file manager path changes for workspace persistence
