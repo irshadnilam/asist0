@@ -383,7 +383,14 @@ function AppPage() {
         }
       })
 
-      // Delete
+      // Delete — protect /skills folder from deletion
+      api.intercept('delete-files', (ev: any) => {
+        const ids: string[] = ev.ids ?? []
+        if (ids.some((id: string) => id === '/skills')) {
+          setError('The skills folder cannot be deleted')
+          return false
+        }
+      })
       api.on('delete-files', async (ev: any) => {
         const token = idTokenRef.current
         if (!token) return

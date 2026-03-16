@@ -83,6 +83,7 @@ Asist0 is a voice-first AI workspace built on the [Google Agent Development Kit 
 |---------|---------|-------|
 | **Gemini Live 2.5 Flash Native Audio** | Voice model — bidirectional audio streaming | `agent.py`, `main.py` RunConfig |
 | **Gemini 2.5 Flash Image** | Image generation and editing | `agent_tools.py` via `genai.Client` |
+| **Google Search Grounding** | Real-time web search for current events, weather, news, etc. | `agent.py` — `google_search` tool |
 | **Vertex AI Session Service** | Per-connection session storage | `main.py` — `VertexAiSessionService` |
 | **Vertex AI Memory Bank** | Long-term memory across sessions | `main.py` — `VertexAiMemoryBankService` |
 | **Agent Engine** | Sandbox code execution for skill scripts | `agent.py` — `AgentEngineSandboxCodeExecutor` |
@@ -116,6 +117,7 @@ Asist0 is a voice-first AI workspace built on the [Google Agent Development Kit 
 | `VertexAiSessionService` | `google.adk.sessions` | Creates and manages sessions on Vertex AI |
 | `VertexAiMemoryBankService` | `google.adk.memory` | Long-term memory — save and search past conversations |
 | `PreloadMemoryTool` | `google.adk.tools.preload_memory_tool` | Auto-loads relevant memories at start of each turn |
+| `google_search` | `google.adk.tools.google_search_tool` | Google Search grounding — real-time web information |
 | `SkillToolset` | `google.adk.tools.skill_toolset` | Wraps user-defined skills into agent-callable tools |
 | `AgentEngineSandboxCodeExecutor` | `google.adk.code_executors` | Sandboxed Python/shell script execution for skills |
 | `Skill`, `Frontmatter`, `Resources`, `Script` | `google.adk.skills.models` | Data models for the skill system |
@@ -148,6 +150,7 @@ Each WebSocket connection creates a custom agent via `create_agent()`:
 ```
 Agent
 ├── PreloadMemoryTool          ← Always present — loads cross-session memories
+├── google_search              ← Always present — real-time web search grounding
 ├── SkillToolset               ← User's skills from /skills/*/SKILL.md
 │   └── AgentEngineSandboxCodeExecutor (for skill scripts)
 ├── 13 File/Image Tool closures (capture user_id + bucket_name)
@@ -161,6 +164,7 @@ Agent
     ├── Memory section: cross-session knowledge awareness
     ├── Skills section: when/how to use and create skills
     ├── Image section: generation prompting tips, aspect ratios
+    ├── Web search section: when/how to use Google Search grounding
     ├── Available tools list (appended dynamically)
     └── Current skills summary (appended dynamically)
 ```

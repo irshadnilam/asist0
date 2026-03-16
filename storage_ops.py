@@ -292,7 +292,15 @@ def delete_files(
 
     Deletes both Firestore metadata and Storage blobs.
     For folders, recursively deletes all children.
+
+    The /skills folder is protected and cannot be deleted.
     """
+    # Protect the /skills folder
+    protected = {"/skills"}
+    blocked = [fid for fid in file_ids if fid in protected]
+    if blocked:
+        raise ValueError(f"Cannot delete protected folder(s): {', '.join(blocked)}")
+
     bucket = _bucket(bucket_name)
     col = _files_col(user_id)
 

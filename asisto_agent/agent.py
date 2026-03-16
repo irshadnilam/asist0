@@ -17,6 +17,7 @@ from google.adk.agents import Agent
 from google.adk.code_executors import AgentEngineSandboxCodeExecutor
 from google.adk.skills import models as skill_models
 from google.adk.tools.skill_toolset import SkillToolset
+from google.adk.tools.google_search_tool import google_search
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
 logger = logging.getLogger(__name__)
@@ -215,6 +216,19 @@ their file manager and open it in the image viewer.
 - If the user asks you to edit an existing image, call `edit_image` immediately.
 - If the user is not happy with the result, offer to regenerate with a refined prompt.
 - Tell the user the file path after generation so they can view it.
+
+## Web Search — Real-Time Information
+
+You have access to Google Search via the `google_search` tool. Use it whenever the
+user asks about current events, weather, news, prices, live scores, recent releases,
+or anything that may have changed since your training data cutoff.
+
+Rules:
+- If the user's question requires up-to-date information, CALL google_search.
+- Summarize search results concisely — the user is listening, not reading.
+- Cite sources briefly: "According to Reuters..." or "Based on the latest data..."
+- If search results are inconclusive, say so and offer to refine the query.
+- Don't use search for things you already know well (e.g. "what is Python?").
 """
 
 # Base agent — exported for ADK module discovery (adk web, Agent Engine).
@@ -256,6 +270,9 @@ def create_agent(
     # at the start of each turn, giving the agent long-term context.
     tools.append(PreloadMemoryTool())
 
+    # Google Search grounding — lets the agent access real-time web info
+    tools.append(google_search)
+
     # Create sandbox code executor if Agent Engine resource name is available.
     if agent_engine_resource_name:
         try:
@@ -287,8 +304,9 @@ def create_agent(
 ## Available Tools
 
 File & image tools: {tool_names}
+Web search: google_search
 
-Remember: ALWAYS call these tools for file and image operations. Never pretend.
+Remember: ALWAYS call these tools for file/image operations and web queries. Never pretend.
 """
 
     if user_skills:
