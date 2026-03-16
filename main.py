@@ -611,6 +611,15 @@ async def websocket_endpoint(
                 event.model_dump_json(exclude_none=True, by_alias=True)
             )
 
+            # --- Detect tool calls and forward synthetic toolActivity events ---
+            if "content" in event_payload:
+                parts = event_payload["content"].get("parts", [])
+                for part in parts:
+                    fc = part.get("functionCall")
+                    if fc and fc.get("name"):
+                        tool_msg = {"toolActivity": {"name": fc["name"]}}
+                        await websocket.send_text(json.dumps(tool_msg))
+
             # --- Filter content.parts: drop functionCall / functionResponse ---
             if "content" in event_payload:
                 parts = event_payload["content"].get("parts", [])
@@ -671,17 +680,9 @@ async def websocket_endpoint(
     finally:
         live_request_queue.close()
 
-        # Save session to long-term memory (Memory Bank) so the agent
-        # can recall this conversation in future sessions.
-        try:
-            completed_session = await session_service.get_session(
-                app_name=APP_NAME, user_id=user_id, session_id=session_id
-            )
-            if completed_session:
-                await memory_service.add_session_to_memory(completed_session)
-                logger.info(f"Session {session_id} saved to memory for user {user_id}")
-        except Exception as e:
-            logger.warning(f"Failed to save session to memory: {e}")
+        # Memory is now saved automatically via after_agent_callback
+        # (_auto_save_session_to_memory) after each agent turn, so we
+        # no longer need to manually call add_session_to_memory() here.
 
         # Ensure clean close so the client can detect disconnect and reconnect
         try:

@@ -24,6 +24,23 @@ logger = logging.getLogger(__name__)
 
 LIVE_MODEL = os.getenv("ASISTO_AGENT_MODEL", "gemini-live-2.5-flash-native-audio")
 
+
+async def _auto_save_session_to_memory(callback_context):
+    """After-agent callback that persists the session to Memory Bank.
+
+    Called after each agent turn completes, so memories are saved
+    continuously rather than only on WebSocket disconnect.
+    """
+    try:
+        memory_service = callback_context._invocation_context.memory_service
+        if memory_service:
+            await memory_service.add_session_to_memory(
+                callback_context._invocation_context.session
+            )
+    except Exception as e:
+        logger.warning(f"Auto-save session to memory failed: {e}")
+
+
 BASE_INSTRUCTION = """\
 You are Asist0 — a proactive AI collaborator embedded in the user's workspace.
 You work alongside the user in real-time through voice. Think of yourself as a
@@ -238,6 +255,7 @@ root_agent = Agent(
     model=LIVE_MODEL,
     description="A voice-first AI collaborator with file management and user-extensible skills.",
     instruction=BASE_INSTRUCTION,
+    after_agent_callback=_auto_save_session_to_memory,
 )
 
 
@@ -332,4 +350,5 @@ general knowledge when a skill exists for the task.
         instruction=instruction,
         tools=tools,
         code_executor=code_executor,
+        after_agent_callback=_auto_save_session_to_memory,
     )

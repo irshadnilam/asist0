@@ -139,6 +139,7 @@ function AppPage() {
   const [transcript, setTranscript] = useState<string>('')
   const [agentError, setAgentError] = useState<string | null>(null)
   const [agentStreaming, setAgentStreaming] = useState(false)
+  const [toolActivity, setToolActivity] = useState<string | null>(null)
   const WORKSPACE_ID = 'default'
 
   // Audio playback (PCM 24kHz from Gemini → speaker) — always ready
@@ -189,11 +190,19 @@ function AppPage() {
       // Streaming indicator: partial=true means agent is mid-response
       if (event.partial === true) {
         setAgentStreaming(true)
+        setToolActivity(null) // Clear tool activity when agent starts responding
+      }
+
+      // Tool activity: agent is calling a tool (shown during silent tool execution gap)
+      const ta = event.toolActivity as { name?: string } | undefined
+      if (ta?.name) {
+        setToolActivity(ta.name)
       }
 
       // Turn complete: agent finished responding
       if (event.turnComplete) {
         setAgentStreaming(false)
+        setToolActivity(null)
       }
 
       // Agent errors — show to user briefly, auto-dismiss after 8s
@@ -557,8 +566,13 @@ function AppPage() {
           {wsStatus === 'error' && (
             <span className="text-xs text-[#f85149]">disconnected</span>
           )}
-          {agentStreaming && (
+          {agentStreaming && !toolActivity && (
             <span className="text-xs text-[#d2a8ff]">thinking...</span>
+          )}
+          {toolActivity && (
+            <span className="text-xs text-[#d2a8ff]">
+              working: {toolActivity}...
+            </span>
           )}
           {agentError && (
             <span className="max-w-xs truncate text-xs text-[#f85149]">
