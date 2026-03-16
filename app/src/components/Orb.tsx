@@ -15,6 +15,8 @@ import { useEffect, useRef } from 'react'
 interface OrbProps {
   /** Whether the orb is in active (listening/speaking) state */
   active?: boolean
+  /** Whether the orb is disabled (no workspace selected) */
+  disabled?: boolean
   /** Called when the orb is clicked */
   onToggle?: () => void
   /** Size in pixels (width & height) */
@@ -196,7 +198,7 @@ function hexToVec3(hex: string): Vec3 {
   return new Vec3(r, g, b)
 }
 
-export default function Orb({ active = false, onToggle, size = 64 }: OrbProps) {
+export default function Orb({ active = false, disabled = false, onToggle, size = 64 }: OrbProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef(active)
   activeRef.current = active
@@ -309,13 +311,20 @@ export default function Orb({ active = false, onToggle, size = 64 }: OrbProps) {
     }
   }, [])
 
+  const title = disabled
+    ? 'enter a workspace to start talking'
+    : active
+      ? 'tap to stop'
+      : 'tap to start'
+
   return (
     <button
       type="button"
-      onClick={onToggle}
-      className="relative cursor-pointer rounded-full transition-all duration-700"
+      onClick={disabled ? undefined : onToggle}
+      className={`relative rounded-full transition-all duration-700 ${disabled ? 'cursor-not-allowed opacity-30' : 'cursor-pointer'}`}
       style={{ width: size, height: size }}
-      title={active ? 'tap to stop' : 'tap to start'}
+      title={title}
+      aria-disabled={disabled}
     >
       <div
         ref={containerRef}

@@ -49,7 +49,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 function RootLayout() {
   return (
     <AuthProvider>
-      <div className="flex min-h-screen flex-col bg-[#0d1117] text-[#c9d1d9]">
+      <div className="flex h-screen flex-col bg-[#0d1117] text-[#c9d1d9]">
         <Outlet />
       </div>
     </AuthProvider>

@@ -75,7 +75,7 @@ os.environ.setdefault("GOOGLE_CLOUD_LOCATION", LOCATION)
 APP_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/reasoningEngines/{ENGINE_ID}"
 
 # Configure logging — root at WARNING to silence SDK noise,
-# our logger at INFO to see A2UI state deltas and errors.
+# our logger at INFO to see transcripts and errors.
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -119,7 +119,9 @@ async def get_current_user(
 
 
 # --- Vertex AI Services ---
-session_service = VertexAiSessionService(project=PROJECT_ID, location=LOCATION, agent_engine_id=ENGINE_ID)
+session_service = VertexAiSessionService(
+    project=PROJECT_ID, location=LOCATION, agent_engine_id=ENGINE_ID
+)
 memory_service = VertexAiMemoryBankService(
     project=PROJECT_ID,
     location=LOCATION,
@@ -151,7 +153,6 @@ async def create_workspace(user_id: str = Depends(get_current_user)):
     session = await session_service.create_session(
         app_name=APP_NAME,
         user_id=user_id,
-        state={"a2ui": {"surfaces": {}}},
     )
     return CreateWorkspaceResponse(workspace_id=session.id)
 
@@ -174,6 +175,8 @@ async def get_workspace(workspace_id: str, user_id: str = Depends(get_current_us
         user_id=user_id,
         session_id=workspace_id,
     )
+    if not session:
+        raise HTTPException(status_code=404, detail="Workspace not found")
     return WorkspaceInfo(workspace_id=session.id)
 
 
@@ -241,7 +244,7 @@ async def websocket_endpoint(
     await websocket.accept()
 
     # --- Determine response modality based on model ---
-    model_name = root_agent.model
+    model_name = str(root_agent.model)
     is_native_audio = "native-audio" in model_name.lower()
 
     if is_native_audio:
@@ -250,13 +253,11 @@ async def websocket_endpoint(
             response_modalities=["AUDIO"],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            session_resumption=types.SessionResumptionConfig(),
         )
     else:
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["TEXT"],
-            session_resumption=types.SessionResumptionConfig(),
         )
 
     # --- Get or create session (workspace_id maps to ADK session_id) ---
@@ -308,10 +309,6 @@ async def websocket_endpoint(
         Only forwards user-facing data: audio, text, transcriptions,
         turnComplete, interrupted. Strips out function calls, function
         responses, and agent-delegation internals.
-
-        Also intercepts state_delta for A2UI messages and forwards them
-        as separate WebSocket frames so the frontend renderer can process
-        them independently from audio/text events.
         """
         async for event in runner.run_live(
             user_id=user_id,
@@ -322,38 +319,6 @@ async def websocket_endpoint(
             event_payload = json.loads(
                 event.model_dump_json(exclude_none=True, by_alias=True)
             )
-
-            # Debug: log every event's top-level keys and content part types
-            event_keys = sorted(event_payload.keys())
-            parts = event_payload.get("content", {}).get("parts", [])
-            part_types = [list(p.keys()) for p in parts] if parts else []
-            # Skip logging pure audio events (just inlineData)
-            is_pure_audio = parts and all(
-                set(p.keys()) <= {"inlineData"} for p in parts
-            )
-            if not is_pure_audio:
-                logger.info(f"[event] keys={event_keys} parts={part_types}")
-
-            # --- A2UI: intercept state_delta with "a2ui" key ---
-            # The a2ui state is a full snapshot: {"surfaces": {id: {components, dataModel}}}
-            # We forward it as a special message type so the frontend can sync its store.
-            state_delta = event_payload.get("actions", {}).get(
-                "stateDelta"
-            ) or event_payload.get("actions", {}).get("state_delta")
-            if state_delta and "a2ui" in state_delta:
-                a2ui_state = state_delta["a2ui"]
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "a2ui_state",
-                            "state": a2ui_state,
-                        }
-                    )
-                )
-                logger.info(
-                    f"[downstream] forwarded A2UI state: "
-                    f"{list(a2ui_state.get('surfaces', {}).keys()) if isinstance(a2ui_state, dict) else '?'}"
-                )
 
             # --- Filter content.parts: drop functionCall / functionResponse ---
             if "content" in event_payload:

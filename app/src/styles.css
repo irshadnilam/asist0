@@ -47,3 +47,305 @@ body {
 ::selection {
   background: rgba(56, 139, 253, 0.3);
 }
+
+/* ── File Manager dark theme overrides ── */
+/* Targets actual class names from @cubone/react-file-manager */
+.fm-dark-theme {
+  --fm-bg: #0d1117;
+  --fm-surface: #161b22;
+  --fm-border: #21262d;
+  --fm-text: #c9d1d9;
+  --fm-text-muted: #8b949e;
+  --fm-text-dim: #484f58;
+  --fm-hover: rgba(255, 255, 255, 0.05);
+  --fm-selected: rgba(56, 139, 253, 0.15);
+}
+
+/* Root container */
+.fm-dark-theme .file-explorer {
+  background-color: var(--fm-bg) !important;
+  color: var(--fm-text) !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* Kill horizontal scrollbar white track */
+.fm-dark-theme .files::-webkit-scrollbar {
+  height: 6px;
+}
+
+.fm-dark-theme .files::-webkit-scrollbar-track {
+  background: var(--fm-bg) !important;
+}
+
+.fm-dark-theme .files::-webkit-scrollbar-thumb {
+  background: #30363d !important;
+}
+
+/* Toolbar */
+.fm-dark-theme .toolbar {
+  background-color: var(--fm-surface) !important;
+  border-color: var(--fm-border) !important;
+  color: var(--fm-text) !important;
+}
+
+.fm-dark-theme .toolbar .item-action {
+  background-color: transparent !important;
+  color: var(--fm-text-muted) !important;
+}
+
+.fm-dark-theme .toolbar .item-action:hover {
+  background-color: var(--fm-hover) !important;
+  color: var(--fm-text) !important;
+}
+
+.fm-dark-theme .toolbar .fm-toolbar .toggle-view {
+  background-color: var(--fm-surface) !important;
+  border-color: var(--fm-border) !important;
+}
+
+.fm-dark-theme .toolbar .fm-toolbar .toggle-view ul li {
+  color: var(--fm-text) !important;
+}
+
+.fm-dark-theme .toolbar .fm-toolbar .toggle-view ul li:hover {
+  background-color: var(--fm-hover) !important;
+}
+
+.fm-dark-theme .toolbar .item-separator {
+  border-color: var(--fm-border) !important;
+}
+
+/* Breadcrumb */
+.fm-dark-theme .bread-crumb-container {
+  background-color: var(--fm-surface) !important;
+  border-color: var(--fm-border) !important;
+}
+
+.fm-dark-theme .bread-crumb-container .breadcrumb .folder-name {
+  color: var(--fm-text-muted) !important;
+}
+
+.fm-dark-theme .bread-crumb-container .breadcrumb .folder-name:hover,
+.fm-dark-theme .bread-crumb-container .breadcrumb .folder-name-btn:hover {
+  color: #58a6ff !important;
+  background-color: transparent !important;
+}
+
+.fm-dark-theme .bread-crumb-container .breadcrumb .divider {
+  background: var(--fm-border) !important;
+}
+
+.fm-dark-theme .bread-crumb-container .hidden-folders-container {
+  background-color: var(--fm-surface) !important;
+  border-color: var(--fm-border) !important;
+}
+
+/* Files container (holds nav pane + file list) */
+.fm-dark-theme .files-container {
+  background-color: var(--fm-bg) !important;
+}
+
+/* Navigation pane (left sidebar with folder tree) */
+.fm-dark-theme .navigation-pane {
+  background-color: var(--fm-bg) !important;
+  border-color: var(--fm-border) !important;
+}
+
+.fm-dark-theme .navigation-pane .sb-folders-list {
+  background-color: var(--fm-bg) !important;
+}
+
+.fm-dark-theme .sb-folders-list-item {
+  color: var(--fm-text-muted) !important;
+}
+
+.fm-dark-theme .sb-folders-list-item:hover {
+  background-color: var(--fm-hover) !important;
+}
+
+.fm-dark-theme .sb-folders-list-item .sb-folder-name {
+  color: var(--fm-text-muted) !important;
+}
+
+.fm-dark-theme .sb-folders-list .active-list-item {
+  background-color: var(--fm-selected) !important;
+  color: #58a6ff !important;
+}
+
+.fm-dark-theme .sb-folders-list .active-list-item .sb-folder-name {
+  color: #58a6ff !important;
+}
+
+.fm-dark-theme .sb-folders-list .active-list-item:hover {
+  background-color: var(--fm-selected) !important;
+}
+
+.fm-dark-theme .sidebar-resize {
+  background-color: var(--fm-border) !important;
+}
+
+.fm-dark-theme .empty-nav-pane {
+  color: var(--fm-text-dim) !important;
+}
+
+/* Files list view */
+.fm-dark-theme .files {
+  background-color: var(--fm-bg) !important;
+}
+
+.fm-dark-theme .files-header {
+  background-color: var(--fm-surface) !important;
+  border-color: var(--fm-border) !important;
+}
+
+.fm-dark-theme .files-header .file-name,
+.fm-dark-theme .files-header .file-date,
+.fm-dark-theme .files-header .file-size,
+.fm-dark-theme .files-header .file-select-all {
+  color: var(--fm-text-muted) !important;
+  background-color: transparent !important;
+  border-color: var(--fm-border) !important;
+}
+
+.fm-dark-theme .files-header .file-name:hover,
+.fm-dark-theme .files-header .file-date:hover,
+.fm-dark-theme .files-header .file-size:hover {
+  background-color: var(--fm-hover) !important;
+}
+
+.fm-dark-theme .files-header .file-name.active,
+.fm-dark-theme .files-header .file-date.active,
+.fm-dark-theme .files-header .file-size.active {
+  background-color: rgba(56, 139, 253, 0.08) !important;
+  color: #58a6ff !important;
+}
+
+/* File items */
+.fm-dark-theme .file-item-container {
+  color: var(--fm-text) !important;
+  border-color: var(--fm-border) !important;
+}
+
+.fm-dark-theme .file-item-container:hover {
+  background-color: var(--fm-hover) !important;
+}
+
+.fm-dark-theme .file-item-container.file-selected {
+  background-color: var(--fm-selected) !important;
+}
+
+.fm-dark-theme .file-item-container.file-selected:hover {
+  background-color: rgba(56, 139, 253, 0.25) !important;
+}
+
+.fm-dark-theme .file-item .file-name {
+  color: var(--fm-text) !important;
+}
+
+.fm-dark-theme .file-item .modified-date {
+  color: var(--fm-text-dim) !important;
+}
+
+.fm-dark-theme .file-item .size {
+  color: var(--fm-text-dim) !important;
+}
+
+/* Empty folder message */
+.fm-dark-theme .empty-folder {
+  color: var(--fm-text-dim) !important;
+}
+
+/* Context menu */
+.fm-dark-theme .fm-context-menu {
+  background-color: var(--fm-surface) !important;
+  border-color: var(--fm-border) !important;
+  color: var(--fm-text) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
+}
+
+.fm-dark-theme .fm-context-menu .file-context-menu-list ul li {
+  color: var(--fm-text) !important;
+}
+
+.fm-dark-theme .fm-context-menu .file-context-menu-list ul li:hover {
+  background-color: var(--fm-hover) !important;
+}
+
+.fm-dark-theme .fm-context-menu .file-context-menu-list .divider {
+  border-color: var(--fm-border) !important;
+}
+
+.fm-dark-theme .fm-context-menu .file-context-menu-list .sub-menu {
+  background-color: var(--fm-surface) !important;
+  border-color: var(--fm-border) !important;
+  color: var(--fm-text) !important;
+}
+
+/* Modal dialogs */
+.fm-dark-theme .fm-modal {
+  background-color: var(--fm-surface) !important;
+  color: var(--fm-text) !important;
+}
+
+.fm-dark-theme .fm-modal-header {
+  color: var(--fm-text) !important;
+}
+
+/* Checkbox */
+.fm-dark-theme .fm-checkbox {
+  accent-color: #58a6ff !important;
+}
+
+/* Scrollbar inside file manager */
+.fm-dark-theme ::-webkit-scrollbar-track {
+  background: var(--fm-bg);
+}
+
+.fm-dark-theme ::-webkit-scrollbar-thumb {
+  background: #30363d;
+}
+
+/* Catch-all: force dark borders on all children */
+.fm-dark-theme .file-explorer *,
+.fm-dark-theme .file-explorer section {
+  border-color: var(--fm-border) !important;
+}
+
+/* Nuclear option: kill any remaining white/light backgrounds anywhere in the tree */
+.fm-dark-theme,
+.fm-dark-theme .file-explorer,
+.fm-dark-theme .file-explorer > *,
+.fm-dark-theme .files-container,
+.fm-dark-theme .files-container > *,
+.fm-dark-theme .files,
+.fm-dark-theme .navigation-pane {
+  background-color: var(--fm-bg) !important;
+}
+
+/* Surface-level elements get the slightly lighter dark */
+.fm-dark-theme .toolbar,
+.fm-dark-theme .bread-crumb-container,
+.fm-dark-theme .files-header {
+  background-color: var(--fm-surface) !important;
+}
+
+/* Kill any stray borders (especially the bottom white border) */
+.fm-dark-theme .file-explorer,
+.fm-dark-theme .file-explorer > div,
+.fm-dark-theme .file-explorer > section,
+.fm-dark-theme .files-container {
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Ensure no element in the tree has a white or light background */
+.fm-dark-theme .file-explorer div,
+.fm-dark-theme .file-explorer section,
+.fm-dark-theme .file-explorer span,
+.fm-dark-theme .file-explorer ul,
+.fm-dark-theme .file-explorer li {
+  background-color: inherit;
+}

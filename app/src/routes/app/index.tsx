@@ -1,23 +1,166 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { FileManager } from '@cubone/react-file-manager'
+import '@cubone/react-file-manager/dist/style.css'
 import { createWorkspace, deleteWorkspace, listWorkspaces } from '../../lib/api'
 import { useAuth } from '../../lib/useAuth'
-import type { WorkspaceInfo } from '../../lib/api'
+import { useAgentSocket, type WsEvent, type WsStatus } from '../../lib/useAgentSocket'
+import { useAudioCapture } from '../../lib/useAudioCapture'
+import { useAudioPlayback } from '../../lib/useAudioPlayback'
+
+const Orb = lazy(() => import('../../components/Orb'))
+
+/** Decode base64 (standard or URL-safe) string to ArrayBuffer */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  let standardBase64 = base64.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = standardBase64.length % 4
+  if (pad) {
+    standardBase64 += '='.repeat(4 - pad)
+  }
+  const binaryString = atob(standardBase64)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  return bytes.buffer
+}
 
 export const Route = createFileRoute('/app/')({
-  component: WorkspaceList,
+  component: WorkspaceExplorer,
 })
 
-function WorkspaceList() {
+/** Build FileManager file objects from workspace IDs.
+ *  Each workspace is a folder containing a prompt.md file. */
+function workspacesToFiles(ids: string[]) {
+  const files: Array<{
+    name: string
+    isDirectory: boolean
+    path: string
+    updatedAt: string
+    size?: number
+  }> = []
+
+  for (const id of ids) {
+    // The workspace folder
+    files.push({
+      name: id,
+      isDirectory: true,
+      path: `/${id}`,
+      updatedAt: new Date().toISOString(),
+    })
+    // prompt.md inside each workspace
+    files.push({
+      name: 'prompt.md',
+      isDirectory: false,
+      path: `/${id}/prompt.md`,
+      updatedAt: new Date().toISOString(),
+      size: 256,
+    })
+  }
+
+  return files
+}
+
+function WorkspaceExplorer() {
   const navigate = useNavigate()
   const { user, loading: authLoading, idToken, signOut } = useAuth()
-  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [workspaceIds, setWorkspaceIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  const [creating, setCreating] = useState(false)
-  const [deleting, setDeleting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const listRef = useRef<HTMLDivElement>(null)
+  const [orbActive, setOrbActive] = useState(false)
+  const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null)
+  const orbActiveRef = useRef(false)
+
+  // --- Audio playback (agent -> speaker) ---
+  const { play: playAudio, stop: stopPlayback, destroy: destroyPlayback, ensureInit: ensurePlaybackInit } = useAudioPlayback()
+
+  // --- WebSocket event handler ---
+  const handleEvent = useCallback(
+    (event: WsEvent) => {
+      const content = event.content as
+        | { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> }
+        | undefined
+      if (content?.parts) {
+        for (const part of content.parts) {
+          if (
+            part.inlineData?.data &&
+            part.inlineData.mimeType?.startsWith('audio/')
+          ) {
+            const pcmBuffer = base64ToArrayBuffer(part.inlineData.data)
+            playAudio(pcmBuffer)
+          }
+        }
+      }
+      if (event.interrupted) {
+        stopPlayback()
+      }
+    },
+    [playAudio, stopPlayback],
+  )
+
+  const { status, connect, disconnect, sendAudio } = useAgentSocket({
+    workspaceId: activeWorkspace ?? '',
+    token: idToken,
+    onEvent: handleEvent,
+  })
+
+  // --- Audio capture (mic -> backend) ---
+  const { start: startCapture, stop: stopCapture } = useAudioCapture({
+    onChunk: useCallback(
+      (pcm: ArrayBuffer) => { sendAudio(pcm) },
+      [sendAudio],
+    ),
+  })
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      stopCapture()
+      destroyPlayback()
+    }
+  }, [stopCapture, destroyPlayback])
+
+  // Connect WebSocket when a workspace is active
+  useEffect(() => {
+    if (idToken && activeWorkspace) {
+      connect()
+    }
+    return () => { disconnect() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idToken, activeWorkspace])
+
+  const handleOrbToggle = useCallback(() => {
+    // Can't activate the orb without a workspace
+    if (!activeWorkspace) return
+
+    const next = !orbActiveRef.current
+    orbActiveRef.current = next
+    setOrbActive(next)
+
+    if (next) {
+      void ensurePlaybackInit()
+      stopPlayback()
+      startCapture()
+    } else {
+      stopCapture()
+    }
+  }, [activeWorkspace, startCapture, stopCapture, stopPlayback, ensurePlaybackInit])
+
+  // Track which workspace folder the user is in.
+  // When navigating back to root, deactivate the orb and stop audio.
+  const handleFolderChange = useCallback((path: string) => {
+    const parts = path.split('/').filter(Boolean)
+    const wsId = parts.length > 0 ? parts[0] : null
+
+    if (!wsId && orbActiveRef.current) {
+      // Leaving a workspace — deactivate orb
+      orbActiveRef.current = false
+      setOrbActive(false)
+      stopCapture()
+    }
+
+    setActiveWorkspace(wsId)
+  }, [stopCapture])
 
   // Redirect to sign-in if not authenticated
   useEffect(() => {
@@ -26,14 +169,14 @@ function WorkspaceList() {
     }
   }, [authLoading, user, navigate])
 
+  // Fetch workspaces
   const fetchWorkspaces = useCallback(async () => {
     if (!idToken) return
     try {
       setLoading(true)
       setError(null)
       const data = await listWorkspaces({ data: idToken })
-      setWorkspaces(data)
-      setSelectedIndex(0)
+      setWorkspaceIds(data.map((ws) => ws.workspace_id))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load workspaces')
     } finally {
@@ -47,82 +190,45 @@ function WorkspaceList() {
     }
   }, [idToken, fetchWorkspaces])
 
-  const openWorkspace = useCallback(
-    (workspaceId: string) => {
-      navigate({ to: '/app/$workspaceId', params: { workspaceId } })
-    },
-    [navigate],
-  )
-
-  const handleCreateWorkspace = useCallback(async () => {
-    if (!idToken) return
-    try {
-      setCreating(true)
-      setError(null)
-      const ws = await createWorkspace({ data: idToken })
-      openWorkspace(ws.workspace_id)
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to create workspace',
-      )
-    } finally {
-      setCreating(false)
-    }
-  }, [idToken, openWorkspace])
-
-  const handleDeleteWorkspace = useCallback(
-    async (e: React.MouseEvent, workspaceId: string) => {
-      e.stopPropagation() // Don't trigger row click (open)
+  // Create workspace -> new folder
+  const handleCreateFolder = useCallback(
+    async (_name: string) => {
       if (!idToken) return
       try {
-        setDeleting(workspaceId)
         setError(null)
-        await deleteWorkspace({ data: { token: idToken, workspaceId } })
-        setWorkspaces((prev) => prev.filter((ws) => ws.workspace_id !== workspaceId))
+        const ws = await createWorkspace({ data: idToken })
+        setWorkspaceIds((prev) => [...prev, ws.workspace_id])
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'Failed to delete workspace',
-        )
-      } finally {
-        setDeleting(null)
+        setError(err instanceof Error ? err.message : 'Failed to create workspace')
       }
     },
     [idToken],
   )
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSelectedIndex((prev) => Math.max(0, prev - 1))
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSelectedIndex((prev) =>
-          Math.min(workspaces.length - 1, prev + 1),
-        )
-      } else if (e.key === 'Enter') {
-        e.preventDefault()
-        if (workspaces.length > 0 && workspaces[selectedIndex]) {
-          openWorkspace(workspaces[selectedIndex].workspace_id)
+  // Delete workspace(s)
+  const handleDelete = useCallback(
+    async (files: Array<{ name: string; isDirectory: boolean; path: string }>) => {
+      if (!idToken) return
+      try {
+        setError(null)
+        for (const f of files) {
+          if (f.isDirectory) {
+            await deleteWorkspace({ data: { token: idToken, workspaceId: f.name } })
+          }
         }
-      } else if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault()
-        handleCreateWorkspace()
+        const deletedNames = new Set(files.map((f) => f.name))
+        setWorkspaceIds((prev) => prev.filter((id) => !deletedNames.has(id)))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to delete workspace')
       }
-    }
+    },
+    [idToken],
+  )
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [workspaces, selectedIndex, openWorkspace, handleCreateWorkspace])
+  const handleRefresh = useCallback(() => {
+    fetchWorkspaces()
+  }, [fetchWorkspaces])
 
-  // Scroll selected item into view
-  useEffect(() => {
-    if (!listRef.current) return
-    const items = listRef.current.querySelectorAll('[data-workspace-item]')
-    items[selectedIndex]?.scrollIntoView({ block: 'nearest' })
-  }, [selectedIndex])
-
-  // Show nothing while checking auth
   if (authLoading || !user) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -131,114 +237,93 @@ function WorkspaceList() {
     )
   }
 
+  const files = workspacesToFiles(workspaceIds)
+
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex h-full flex-col">
       {/* Title bar */}
-      <div className="flex items-center justify-between border-b border-[#21262d] px-4 py-2">
+      <div className="shrink-0 flex items-center justify-between border-b border-[#21262d] px-4 py-2">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-[#58a6ff]">asisto</span>
           <span className="text-xs text-[#484f58]">/</span>
           <span className="text-sm text-[#8b949e]">workspaces</span>
         </div>
-        <button
-          type="button"
-          onClick={handleCreateWorkspace}
-          disabled={creating}
-          className="flex items-center gap-1.5 rounded border border-[#30363d] bg-[#21262d] px-3 py-1 text-xs font-medium text-[#c9d1d9] transition hover:border-[#8b949e] hover:bg-[#30363d] disabled:opacity-50"
-        >
-          <span className="text-[#3fb950]">+</span>
-          {creating ? 'creating...' : 'new workspace'}
-          <span className="ml-1 text-[#484f58]">{'\u2318'}N</span>
-        </button>
       </div>
 
-      {/* Content */}
-      <div className="flex flex-1 flex-col px-4 py-3">
-        {error && (
-          <div className="mb-3 rounded border border-[#f85149]/30 bg-[#f85149]/10 px-3 py-2 text-xs text-[#f85149]">
-            {error}
-          </div>
-        )}
+      {/* Error banner */}
+      {error && (
+        <div className="shrink-0 border-b border-[#f85149]/30 bg-[#f85149]/10 px-4 py-2 text-xs text-[#f85149]">
+          {error}
+        </div>
+      )}
 
-        {loading ? (
-          <div className="flex flex-1 items-center justify-center">
-            <span className="text-sm text-[#484f58]">loading workspaces...</span>
+      {/* File manager — fills all remaining height */}
+      {loading ? (
+        <div className="flex flex-1 items-center justify-center">
+          <span className="text-sm text-[#484f58]">loading workspaces...</span>
+        </div>
+      ) : (
+        <div className="relative min-h-0 flex-1">
+          <div className="fm-dark-theme h-full">
+            <FileManager
+              files={files}
+              fontFamily="'JetBrains Mono', 'Fira Code', ui-monospace, monospace"
+              primaryColor="#58a6ff"
+              height="100%"
+              width="100%"
+              layout="list"
+              enableFilePreview={false}
+              onCreateFolder={handleCreateFolder}
+              onDelete={handleDelete}
+              onRefresh={handleRefresh}
+              onFolderChange={handleFolderChange}
+              permissions={{
+                create: true,
+                delete: true,
+                upload: false,
+                move: false,
+                copy: false,
+                rename: false,
+                download: false,
+              }}
+            />
           </div>
-        ) : workspaces.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3">
-            <span className="text-sm text-[#484f58]">
-              no workspaces yet
-            </span>
-            <button
-              type="button"
-              onClick={handleCreateWorkspace}
-              disabled={creating}
-              className="rounded border border-[#30363d] bg-[#21262d] px-4 py-2 text-sm text-[#c9d1d9] transition hover:border-[#8b949e] hover:bg-[#30363d] disabled:opacity-50"
-            >
-              create your first workspace
-            </button>
+
+          {/* Orb — bottom-left corner */}
+          <div className="absolute bottom-4 left-4 z-10" style={{ width: 56, height: 56 }}>
+            <Suspense fallback={null}>
+              <Orb
+                active={orbActive}
+                disabled={!activeWorkspace}
+                onToggle={handleOrbToggle}
+                size={56}
+              />
+            </Suspense>
           </div>
-        ) : (
-          <div ref={listRef} className="flex flex-col gap-0.5">
-            {workspaces.map((ws, index) => (
-              <div
-                key={ws.workspace_id}
-                data-workspace-item
-                onClick={() => openWorkspace(ws.workspace_id)}
-                onMouseEnter={() => setSelectedIndex(index)}
-                className={`flex cursor-pointer items-center rounded px-3 py-2 text-sm transition ${
-                  index === selectedIndex
-                    ? 'bg-[#161b22] text-[#58a6ff]'
-                    : 'text-[#8b949e] hover:bg-[#161b22]/50'
-                }`}
-              >
-                <span className="mr-3 w-5 text-right text-xs text-[#484f58]">
-                  {index + 1}
-                </span>
-                <span className="font-medium">{ws.workspace_id}</span>
-                {index === selectedIndex && (
-                  <span className="ml-auto flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={(e) => handleDeleteWorkspace(e, ws.workspace_id)}
-                      disabled={deleting === ws.workspace_id}
-                      className="text-[#484f58] transition hover:text-[#f85149] disabled:opacity-50"
-                      title="Delete workspace"
-                    >
-                      {deleting === ws.workspace_id ? (
-                        <span className="text-xs">...</span>
-                      ) : (
-                        <svg
-                          className="h-3.5 w-3.5 fill-current"
-                          viewBox="0 0 24 24"
-                          xmlns="http://www.w3.org/2000/svg"
-                        >
-                          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                        </svg>
-                      )}
-                    </button>
-                    <span className="text-xs text-[#484f58]">
-                      enter to open
-                    </span>
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Status bar */}
-      <div className="flex items-center justify-between border-t border-[#21262d] px-4 py-1">
-        <div className="flex items-center gap-3 text-xs text-[#484f58]">
-          <span>{'\u2191\u2193'} navigate</span>
-          <span>{'\u23CE'} open</span>
-          <span>{'\u2318'}N new</span>
-        </div>
+      <div className="shrink-0 flex items-center justify-between border-t border-[#21262d] px-4 py-1">
         <div className="flex items-center gap-3">
           <span className="text-xs text-[#484f58]">
-            {user.displayName || user.email}
+            {workspaceIds.length} workspace{workspaceIds.length !== 1 ? 's' : ''}
           </span>
+          {activeWorkspace ? (
+            <>
+              <span className="text-xs text-[#484f58]">|</span>
+              <span className="text-xs text-[#8b949e]">{activeWorkspace}</span>
+              <WsStatusIndicator status={status} />
+              {orbActive && (
+                <span className="text-xs text-[#3fb950]">listening</span>
+              )}
+            </>
+          ) : (
+            <span className="text-xs text-[#484f58] italic">no workspace selected</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-[#484f58]">{user.displayName || user.email}</span>
           <button
             type="button"
             onClick={signOut}
@@ -249,5 +334,21 @@ function WorkspaceList() {
         </div>
       </div>
     </div>
+  )
+}
+
+function WsStatusIndicator({ status }: { status: WsStatus }) {
+  const color: Record<WsStatus, string> = {
+    disconnected: '#484f58',
+    connecting: '#d29922',
+    connected: '#3fb950',
+    error: '#f85149',
+  }
+  return (
+    <span
+      className="inline-block h-2 w-2 rounded-full"
+      title={status}
+      style={{ backgroundColor: color[status] }}
+    />
   )
 }
