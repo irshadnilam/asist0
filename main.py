@@ -31,7 +31,6 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import VertexAiSessionService
-from google.adk.sessions.base_session_service import GetSessionConfig
 from google.adk.memory import VertexAiMemoryBankService
 from google.genai import types
 
@@ -411,6 +410,33 @@ async def download_file(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Workspace Layout Persistence ---
+
+
+@app.get("/workspace")
+async def get_workspace(user_id: str = Depends(get_current_user)):
+    """Get the user's saved workspace layout snapshot."""
+    try:
+        snapshot = await asyncio.to_thread(storage_ops.get_workspace_layout, user_id)
+        return snapshot or {}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/workspace")
+async def save_workspace(
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Save the user's workspace layout snapshot."""
+    body = await request.json()
+    try:
+        await asyncio.to_thread(storage_ops.save_workspace_layout, user_id, body)
+        return {"status": "saved"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- Event Filtering ---
 
 # Keys worth forwarding to the frontend client.
@@ -423,7 +449,6 @@ _FORWARD_KEYS = {
     "errorCode",
     "errorMessage",
     "partial",
-    "liveSessionResumptionUpdate",
 }
 
 
@@ -462,9 +487,6 @@ async def websocket_endpoint(
     except Exception as e:
         await websocket.close(code=4001, reason=f"Invalid token: {e}")
         return
-
-    # Optional: resumption handle from a previous session for seamless reconnect
-    resumption_handle = websocket.query_params.get("resumptionHandle")
 
     logger.info(f"WebSocket connected: user_id={user_id}, workspace_id={workspace_id}")
     await websocket.accept()
@@ -507,16 +529,19 @@ async def websocket_endpoint(
     model_name = str(session_agent.model)
     is_native_audio = "native-audio" in model_name.lower()
 
-    # Session resumption config — allows seamless reconnect using a handle
-    session_resumption = types.SessionResumptionConfig(
-        handle=resumption_handle or None,
-        transparent=True,
-    )
+    # Session resumption: ADK automatically handles ~10min connection timeouts
+    # by caching resumption handles and reconnecting transparently.
+    session_resumption = types.SessionResumptionConfig()
 
-    # Don't replay past events when reusing a session — prevents old audio
-    # from being played back on connect. The session state is still available
-    # to the agent, just not re-streamed to the client.
-    get_session_config = GetSessionConfig(num_recent_events=0)
+    # Context window compression: enables unlimited session duration by
+    # summarizing older context when token count reaches trigger_tokens.
+    # gemini-2.5-flash-native-audio has a 128k context window.
+    context_compression = types.ContextWindowCompressionConfig(
+        trigger_tokens=100000,  # ~78% of 128k — start compressing
+        sliding_window=types.SlidingWindow(
+            target_tokens=80000  # ~62% of 128k — compress down to this
+        ),
+    )
 
     if is_native_audio:
         run_config = RunConfig(
@@ -525,33 +550,20 @@ async def websocket_endpoint(
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             session_resumption=session_resumption,
-            get_session_config=get_session_config,
+            context_window_compression=context_compression,
         )
     else:
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["TEXT"],
             session_resumption=session_resumption,
-            get_session_config=get_session_config,
+            context_window_compression=context_compression,
         )
 
-    # --- Get or create session ---
-    # VertexAiSessionService does not support user-provided session IDs.
-    # We list existing sessions for this user and reuse the first one,
-    # or create a new session if none exist.
-    sessions_response = await session_service.list_sessions(
-        app_name=APP_NAME, user_id=user_id
-    )
-    if sessions_response.sessions:
-        session = sessions_response.sessions[0]
-        session_id = session.id
-        logger.info(f"Reusing session {session_id} for user {user_id}")
-    else:
-        session = await session_service.create_session(
-            app_name=APP_NAME, user_id=user_id
-        )
-        session_id = session.id
-        logger.info(f"Created new session {session_id} for user {user_id}")
+    # --- Create a new session for each WebSocket connection ---
+    session = await session_service.create_session(app_name=APP_NAME, user_id=user_id)
+    session_id = session.id
+    logger.info(f"Created session {session_id} for user {user_id}")
 
     live_request_queue = LiveRequestQueue()
 

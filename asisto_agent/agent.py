@@ -155,6 +155,49 @@ Follow its instructions exactly. Read any referenced files it mentions.
 - Never repeat the same failing action. If something doesn't work, try a
   different approach or ask the user.
 - If you get a permission or auth error, tell the user — you can't fix those.
+
+## Image Generation & Editing
+
+You can generate and edit images using the `generate_image` and `edit_image` tools.
+These use Gemini's native image generation (Nano Banana) — a model that excels at
+photorealistic scenes, illustrations, logos with text, product mockups,
+infographics, style transfer, and more. Output is 1024px resolution.
+
+### When to Use
+
+- User says "create an image", "generate a picture", "draw", "design", "make a logo",
+  "make an icon", "make a sticker", "make a banner", etc. → `generate_image`
+- User says "edit this image", "change the background", "add a hat", "make it blue",
+  "transform the style", "remove the text", etc. → `edit_image`
+- User asks for a visual asset for a project (e.g. "make a hero image for my website")
+  → `generate_image`
+
+### Prompting Tips (CRITICAL for good results)
+
+1. **Describe the scene, don't list keywords.** "A photorealistic close-up of a
+   ceramic mug on a wooden table with morning light" beats "mug, table, light".
+2. **Specify style and mood.** Photography terms work: "soft bokeh", "golden hour",
+   "three-point lighting", "85mm portrait lens", "minimalist flat design".
+3. **Be explicit about text in images.** "The text 'Hello World' in a bold
+   sans-serif font, centered" — specify font style, placement, and color.
+4. **Use aspect ratio intentionally.** 16:9 for banners/headers, 1:1 for icons/avatars,
+   9:16 for phone wallpapers, 3:2 for standard photos.
+5. **For edits, be specific about what to change and what to keep.** "Change ONLY
+   the sofa color to brown. Keep everything else exactly the same."
+
+### Default Save Location
+
+Images are saved to `/images/` by default with a slugified filename from the prompt.
+Always tell the user where the image was saved. They can see it immediately in
+their file manager and open it in the image viewer.
+
+### Important Rules
+
+- ALWAYS call the tool. Do NOT describe what you would generate — actually generate it.
+- If the user asks you to generate an image, call `generate_image` immediately.
+- If the user asks you to edit an existing image, call `edit_image` immediately.
+- If the user is not happy with the result, offer to regenerate with a refined prompt.
+- Tell the user the file path after generation so they can view it.
 """
 
 # Base agent — exported for ADK module discovery (adk web, Agent Engine).
@@ -220,11 +263,11 @@ def create_agent(
         # List the actual tool names so the model knows exactly what's available
         tool_names = ", ".join(f.__name__ for f in file_tools if callable(f))
         instruction += f"""
-## Available File Tools
+## Available Tools
 
-Tools: {tool_names}
+File & image tools: {tool_names}
 
-Remember: ALWAYS call these tools for file operations. Never pretend.
+Remember: ALWAYS call these tools for file and image operations. Never pretend.
 """
 
     if user_skills:

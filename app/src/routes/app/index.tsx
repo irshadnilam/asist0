@@ -16,15 +16,19 @@ import { useFiles } from '../../lib/useFiles'
 import { useAgentSocket, type WsEvent } from '../../lib/useAgentSocket'
 import { useAudioCapture } from '../../lib/useAudioCapture'
 import { useAudioPlayback } from '../../lib/useAudioPlayback'
+import {
+  useWorkspace,
+  type WindowSnapshot,
+} from '../../lib/useWorkspace'
 import FileViewer from '../../components/FileViewer'
-import Window from '../../components/Window'
+import Window, { type WindowState } from '../../components/Window'
 import Orb from '../../components/Orb'
 
 export const Route = createFileRoute('/app/')({
   component: AppPage,
 })
 
-/** Cascade offset for new windows (px) */
+/** Default cascade offset for new windows (px) */
 const CASCADE_OFFSET = 30
 const INITIAL_WIDTH = 700
 const INITIAL_HEIGHT = 500
@@ -45,16 +49,24 @@ function AppPage() {
   } = useFiles(user?.uid ?? null)
 
   // --- Multi-window state ---
-  // Ordered list of open file IDs (order = creation order for cascade)
-  const [openWindows, setOpenWindows] = useState<string[]>([])
-  // Counter for cascading position
+  // Each entry has fileId + optional saved geometry for restore
+  interface OpenWindow {
+    fileId: string
+    /** Saved geometry from workspace snapshot (used only for initial position) */
+    saved?: WindowSnapshot
+  }
+  const [openWindows, setOpenWindows] = useState<OpenWindow[]>([])
+  // Counter for cascading position (new windows without saved positions)
   const cascadeCountRef = useRef(0)
+
+  // --- Workspace persistence ---
+  const workspace = useWorkspace({ uid: user?.uid ?? null, token: idToken })
+  const workspaceRestoredRef = useRef(false)
 
   const openFile = useCallback((fileId: string) => {
     setOpenWindows((prev) => {
-      if (prev.includes(fileId)) {
-        // Already open — WinBox will handle focus via its own z-index
-        // We just need to programmatically focus it
+      if (prev.some((w) => w.fileId === fileId)) {
+        // Already open — focus it via DOM query
         const el = document.getElementById(`wb-${CSS.escape(fileId)}`)
         if (el && (el as any).winbox) {
           ;(el as any).winbox.focus()
@@ -62,13 +74,63 @@ function AppPage() {
         return prev
       }
       cascadeCountRef.current += 1
-      return [...prev, fileId]
+      return [...prev, { fileId }]
     })
   }, [])
 
-  const closeWindow = useCallback((fileId: string) => {
-    setOpenWindows((prev) => prev.filter((id) => id !== fileId))
-  }, [])
+  const closeWindow = useCallback(
+    (fileId: string) => {
+      setOpenWindows((prev) => prev.filter((w) => w.fileId !== fileId))
+      workspace.removeWindowState(fileId)
+    },
+    [workspace],
+  )
+
+  // Handle window state changes (move, resize, focus, min, max)
+  const handleWindowStateChange = useCallback(
+    (fileId: string, state: WindowState) => {
+      workspace.updateWindowState(fileId, state)
+    },
+    [workspace],
+  )
+
+  // --- Workspace restore on mount ---
+  useEffect(() => {
+    if (workspaceRestoredRef.current || !user?.uid || !idToken || filesLoading) return
+    workspaceRestoredRef.current = true
+
+    workspace.restore().then((snapshot) => {
+      if (!snapshot || snapshot.windows.length === 0) return
+
+      // Suppress auto-saves while we restore windows
+      workspace.suppressSave(true)
+
+      // Pre-populate the window states map so save doesn't lose positions
+      workspace.setWindowStates(snapshot.windows)
+
+      // Open all saved windows with their saved geometry
+      setOpenWindows(
+        snapshot.windows.map((w) => ({
+          fileId: w.fileId,
+          saved: w,
+        })),
+      )
+      cascadeCountRef.current = snapshot.windows.length
+
+      // Restore file manager path after a tick (SVAR needs to be initialized)
+      if (snapshot.fileManagerPath) {
+        const path = snapshot.fileManagerPath
+        setTimeout(() => {
+          svarApiRef.current?.exec('set-path', { id: path })
+        }, 500)
+      }
+
+      // Re-enable auto-save after restore settles
+      setTimeout(() => {
+        workspace.suppressSave(false)
+      }, 3000)
+    })
+  }, [user?.uid, idToken, filesLoading, workspace])
 
   // --- Agent state ---
   // micActive = orb is on, user is speaking. WebSocket is always-on independently.
@@ -210,6 +272,9 @@ function AppPage() {
   }, [filesError])
 
   // --- SVAR Filemanager init callback ---
+  const workspaceRef = useRef(workspace)
+  workspaceRef.current = workspace
+
   const initFilemanager = useCallback(
     (api: any) => {
       svarApiRef.current = api
@@ -217,13 +282,29 @@ function AppPage() {
       // Intercept open-file BEFORE SVAR processes it — handle entirely ourselves.
       // Return false to stop SVAR's internal event pipeline.
       api.intercept('open-file', (ev: any) => {
-        if (ev.id) {
-          // Don't open folders as file viewers
-          const match = allFilesRef.current.find((f: any) => f.id === ev.id)
-          if (match?.type === 'folder') return false
-          openFileRef.current(ev.id)
+        if (!ev.id) return false
+
+        // "Back to parent folder" link — navigate up
+        if (ev.id === '/wx-filemanager-parent-link') {
+          const nav = ev.navigation
+          if (nav) {
+            api.exec('set-path', { id: nav })
+          }
+          return false
         }
+
+        // Don't open folders as file viewers
+        const match = allFilesRef.current.find((f: any) => f.id === ev.id)
+        if (match?.type === 'folder') return false
+        openFileRef.current(ev.id)
         return false
+      })
+
+      // Track file manager path changes for workspace persistence
+      api.on('set-path', (ev: any) => {
+        if (ev.id != null) {
+          workspaceRef.current.setFileManagerPath(ev.id as string)
+        }
       })
 
       // Lazy loading: use realtime data (no server call needed)
@@ -381,23 +462,26 @@ function AppPage() {
 
       {/* Floating file editor windows (WinBox portals) */}
       {idToken &&
-        openWindows.map((fileId, index) => {
+        openWindows.map(({ fileId, saved }, index) => {
           const filename = fileId.split('/').pop() || fileId
-          // Cascade position: offset each window slightly
-          const cascadeX = 80 + (index % 10) * CASCADE_OFFSET
-          const cascadeY = 60 + (index % 10) * CASCADE_OFFSET
+          // Use saved position if restoring, otherwise cascade
+          const winX = saved ? saved.x : 80 + (index % 10) * CASCADE_OFFSET
+          const winY = saved ? saved.y : 60 + (index % 10) * CASCADE_OFFSET
+          const winW = saved ? saved.width : INITIAL_WIDTH
+          const winH = saved ? saved.height : INITIAL_HEIGHT
           return (
             <Window
               key={fileId}
               id={fileId}
               title={filename}
-              width={INITIAL_WIDTH}
-              height={INITIAL_HEIGHT}
-              x={cascadeX}
-              y={cascadeY}
+              width={winW}
+              height={winH}
+              x={winX}
+              y={winY}
               minWidth={350}
               minHeight={250}
               onClose={closeWindow}
+              onStateChange={handleWindowStateChange}
               border={1}
               top={0}
               bottom={30}
@@ -453,14 +537,16 @@ function AppPage() {
         </div>
       </div>
 
-      {/* Orb — bottom-center, floating above status bar */}
-      <div className="fixed bottom-3 left-1/2 z-50 -translate-x-1/2">
-        <Orb
-          active={micActive}
-          onToggle={toggleMic}
-          size={72}
-        />
-      </div>
+      {/* Orb — bottom-center, floating above status bar. Only visible once WebSocket is connected. */}
+      {wsStatus === 'connected' && (
+        <div className="fixed bottom-3 left-1/2 z-50 -translate-x-1/2">
+          <Orb
+            active={micActive}
+            onToggle={toggleMic}
+            size={72}
+          />
+        </div>
+      )}
     </div>
   )
 }

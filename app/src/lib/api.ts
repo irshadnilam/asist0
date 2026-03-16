@@ -259,3 +259,37 @@ export const saveFileContent = createServerFn({ method: 'POST' })
       throw new Error(await parseError(res, 'Failed to save file'))
     }
   })
+
+// --- Workspace layout persistence ---
+
+/** Get saved workspace layout snapshot. */
+export const getWorkspaceLayout = createServerFn({ method: 'GET' })
+  .inputValidator((token: string) => token)
+  .handler(async ({ data: token }): Promise<Record<string, unknown>> => {
+    const res = await fetch(`${API_BASE}/workspace`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      throw new Error(await parseError(res, 'Failed to get workspace layout'))
+    }
+    return res.json()
+  })
+
+/** Save workspace layout snapshot. */
+export const saveWorkspaceLayout = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (input: { token: string; snapshot: Record<string, unknown> }) => input,
+  )
+  .handler(async ({ data: { token, snapshot } }): Promise<void> => {
+    const res = await fetch(`${API_BASE}/workspace`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(snapshot),
+    })
+    if (!res.ok) {
+      throw new Error(await parseError(res, 'Failed to save workspace layout'))
+    }
+  })

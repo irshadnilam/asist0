@@ -1,7 +1,9 @@
-"""Agent file-operation tools backed by storage_ops.
+"""Agent file-operation and image-generation tools backed by storage_ops.
 
 These tools let the Asisto agent create, read, write, list, search, copy,
 and delete files in the user's Firebase Storage workspace via voice commands.
+Image tools use Gemini's native image generation (Nano Banana 2) to generate
+and edit images, saving results directly to the user's workspace.
 
 Each tool is a plain Python function (closure) that captures the user_id
 and bucket_name from the session context. ADK auto-wraps them as FunctionTools.
@@ -13,11 +15,56 @@ Usage:
 
 import logging
 import posixpath
+import re
 from typing import Any
+
+from google import genai
+from google.genai import types
 
 import storage_ops
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Image generation constants
+# ---------------------------------------------------------------------------
+
+IMAGE_MODEL = "gemini-2.5-flash-image"
+
+VALID_ASPECT_RATIOS = {
+    "1:1",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:3",
+    "4:5",
+    "5:4",
+    "9:16",
+    "16:9",
+    "21:9",
+}
+
+# Module-level genai client — reused across all tool calls.
+# Picks up GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_CLOUD_PROJECT,
+# and GOOGLE_CLOUD_LOCATION from environment automatically.
+_genai_client: genai.Client | None = None
+
+
+def _get_genai_client() -> genai.Client:
+    """Get or create the module-level genai client."""
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client()
+        logger.info("Created genai.Client for image generation")
+    return _genai_client
+
+
+def _slugify(text: str, max_len: int = 60) -> str:
+    """Convert a prompt string to a filesystem-safe slug."""
+    slug = text.lower().strip()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"[\s-]+", "-", slug)
+    return slug[:max_len].rstrip("-") or "image"
 
 
 def create_file_tools(
@@ -257,6 +304,247 @@ def create_file_tools(
         pct = round(used / total * 100, 1) if total > 0 else 0
         return {"used": used, "total": total, "used_pct": pct}
 
+    # -------------------------------------------------------------------
+    # Image generation & editing tools
+    # -------------------------------------------------------------------
+
+    def generate_image(
+        prompt: str,
+        save_path: str = "",
+        aspect_ratio: str = "1:1",
+    ) -> str:
+        """Generate an image from a text description and save it to the workspace.
+
+        Use this when the user asks you to create, generate, draw, design, or
+        make an image, picture, photo, illustration, logo, icon, sticker, etc.
+
+        The model (Nano Banana) excels at photorealistic scenes, illustrations,
+        logos with text, product mockups, infographics, and style-specific art.
+        Output is 1024px resolution.
+
+        Tips for better results:
+        - Describe the scene narratively, don't just list keywords.
+        - Include style, lighting, camera angle, and mood details.
+        - For text in images, specify font style and placement.
+        - Use aspect_ratio to match the intended use (16:9 for banners, 1:1 for icons, 9:16 for phone wallpapers).
+
+        Args:
+            prompt: Detailed description of the image to generate.
+            save_path: Where to save in the workspace. Defaults to "/images/{slugified-prompt}.png".
+                Must end in .png or .jpg.
+            aspect_ratio: Output aspect ratio. One of: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9. Default "1:1".
+
+        Returns:
+            Confirmation message with the saved file path, or an error message.
+        """
+        logger.info(f"[tool] generate_image: user={user_id}, prompt={prompt[:80]}...")
+
+        # Validate and default save_path
+        if not save_path:
+            slug = _slugify(prompt)
+            save_path = f"/images/{slug}.png"
+        if not save_path.startswith("/"):
+            save_path = "/" + save_path
+
+        # Validate aspect_ratio
+        if aspect_ratio not in VALID_ASPECT_RATIOS:
+            return f"Error: Invalid aspect_ratio '{aspect_ratio}'. Must be one of: {', '.join(sorted(VALID_ASPECT_RATIOS))}"
+
+        try:
+            client = _get_genai_client()
+
+            response = client.models.generate_content(
+                model=IMAGE_MODEL,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                    ),
+                ),
+            )
+
+            # Extract the generated image from response parts
+            image_bytes = None
+            text_response = ""
+            for part in response.parts or []:
+                if part.text is not None:
+                    text_response = part.text
+                elif part.inline_data is not None:
+                    # Get raw image bytes from inline_data
+                    image_bytes = part.inline_data.data
+
+            if image_bytes is None:
+                logger.warning(f"[tool] generate_image: no image in response")
+                return f"Error: The model did not return an image. It said: {text_response or '(no response)'}"
+
+            # Ensure /images folder exists
+            parent_dir = posixpath.dirname(save_path)
+            if parent_dir and parent_dir != "/":
+                info = storage_ops.get_file_info(user_id, parent_dir, bucket_name)
+                if not info:
+                    storage_ops.create_file(user_id, parent_dir, "folder", bucket_name)
+
+            # Save to workspace
+            result = storage_ops.upload_file(
+                user_id=user_id,
+                parent_id=posixpath.dirname(save_path),
+                filename=posixpath.basename(save_path),
+                content=image_bytes,
+                content_type="image/png",
+                bucket_name=bucket_name,
+            )
+
+            size_kb = round(result.get("size", len(image_bytes)) / 1024, 1)
+            msg = f"Image generated and saved to {result['id']} ({size_kb} KB, {aspect_ratio})"
+            if text_response:
+                msg += f". Model note: {text_response[:200]}"
+            logger.info(f"[tool] generate_image: saved {result['id']}")
+            return msg
+
+        except Exception as e:
+            logger.error(f"[tool] generate_image failed: {e}")
+            return f"Error generating image: {e}"
+
+    def edit_image(
+        source_path: str,
+        prompt: str,
+        save_path: str = "",
+        aspect_ratio: str = "",
+    ) -> str:
+        """Edit an existing image using text instructions and save the result.
+
+        Use this when the user asks you to modify, edit, change, update, transform,
+        add to, remove from, or restyle an existing image in their workspace.
+
+        The model can: add/remove elements, change styles, transfer artistic styles,
+        do inpainting (change specific parts), adjust colors/lighting, combine
+        elements from the image with new ones, and more.
+
+        Tips for better edits:
+        - Be specific about what to change and what to keep unchanged.
+        - Reference specific elements: "change the blue sofa to brown leather"
+        - For inpainting: "change only the X to Y, keep everything else the same"
+        - For style transfer: "transform this into the style of [artist/style]"
+
+        Args:
+            source_path: Full path of the source image in the workspace, e.g. "/images/logo.png".
+            prompt: Detailed edit instructions describing what to change.
+            save_path: Where to save the edited image. Defaults to same as source_path (overwrites).
+                Set a different path to keep the original.
+            aspect_ratio: Output aspect ratio. Leave empty to match the source image.
+                One of: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9.
+
+        Returns:
+            Confirmation message with the saved file path, or an error message.
+        """
+        logger.info(
+            f"[tool] edit_image: user={user_id}, source={source_path}, prompt={prompt[:80]}..."
+        )
+
+        # Default save_path to source_path (overwrite)
+        if not save_path:
+            save_path = source_path
+        if not save_path.startswith("/"):
+            save_path = "/" + save_path
+
+        # Validate aspect_ratio if provided
+        if aspect_ratio and aspect_ratio not in VALID_ASPECT_RATIOS:
+            return f"Error: Invalid aspect_ratio '{aspect_ratio}'. Must be one of: {', '.join(sorted(VALID_ASPECT_RATIOS))}"
+
+        try:
+            # Read source image from workspace
+            try:
+                source_bytes = storage_ops.read_file(user_id, source_path, bucket_name)
+            except FileNotFoundError:
+                return f"Error: Source image not found: {source_path}"
+
+            # Determine MIME type from extension
+            ext = (
+                source_path.rsplit(".", 1)[-1].lower() if "." in source_path else "png"
+            )
+            mime_map = {
+                "png": "image/png",
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "gif": "image/gif",
+                "webp": "image/webp",
+            }
+            mime_type = mime_map.get(ext, "image/png")
+
+            # Build content parts: image + text prompt
+            image_part = types.Part(
+                inline_data=types.Blob(
+                    mime_type=mime_type,
+                    data=source_bytes,
+                )
+            )
+            text_part = types.Part(text=prompt)
+
+            # Build image config
+            if aspect_ratio:
+                image_config = types.ImageConfig(
+                    aspect_ratio=aspect_ratio,
+                )
+            else:
+                image_config = types.ImageConfig()
+
+            client = _get_genai_client()
+
+            response = client.models.generate_content(
+                model=IMAGE_MODEL,
+                contents=[image_part, text_part],
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"],
+                    image_config=image_config,
+                ),
+            )
+
+            # Extract the edited image from response parts
+            image_bytes = None
+            text_response = ""
+            for part in response.parts or []:
+                if part.text is not None:
+                    text_response = part.text
+                elif part.inline_data is not None:
+                    image_bytes = part.inline_data.data
+
+            if image_bytes is None:
+                logger.warning(f"[tool] edit_image: no image in response")
+                return f"Error: The model did not return an edited image. It said: {text_response or '(no response)'}"
+
+            # Ensure parent folder exists
+            parent_dir = posixpath.dirname(save_path)
+            if parent_dir and parent_dir != "/":
+                info = storage_ops.get_file_info(user_id, parent_dir, bucket_name)
+                if not info:
+                    storage_ops.create_file(user_id, parent_dir, "folder", bucket_name)
+
+            # Save to workspace
+            result = storage_ops.upload_file(
+                user_id=user_id,
+                parent_id=posixpath.dirname(save_path),
+                filename=posixpath.basename(save_path),
+                content=image_bytes,
+                content_type="image/png",
+                bucket_name=bucket_name,
+            )
+
+            size_kb = round(result.get("size", len(image_bytes)) / 1024, 1)
+            overwrite_note = (
+                " (original overwritten)" if save_path == source_path else ""
+            )
+            ar_note = f", {aspect_ratio}" if aspect_ratio else ""
+            msg = f"Image edited and saved to {result['id']} ({size_kb} KB{ar_note}){overwrite_note}"
+            if text_response:
+                msg += f". Model note: {text_response[:200]}"
+            logger.info(f"[tool] edit_image: saved {result['id']}")
+            return msg
+
+        except Exception as e:
+            logger.error(f"[tool] edit_image failed: {e}")
+            return f"Error editing image: {e}"
+
     return [
         list_files,
         read_file,
@@ -269,4 +557,6 @@ def create_file_tools(
         search_files,
         get_file_info,
         get_storage_usage,
+        generate_image,
+        edit_image,
     ]

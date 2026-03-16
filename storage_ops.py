@@ -847,3 +847,39 @@ def seed_default_files(
 
     logger.info(f"seed_default_files: created {len(created)} items for user {user_id}")
     return created
+
+
+# ---------------------------------------------------------------------------
+# Workspace layout persistence
+# ---------------------------------------------------------------------------
+
+
+def get_workspace_layout(user_id: str) -> dict[str, Any] | None:
+    """Read the saved workspace layout snapshot from Firestore.
+
+    Returns the snapshot dict, or None if no layout is saved.
+    Firestore path: users/{uid}/workspace/layout
+    """
+    db = firestore.client()
+    doc = (
+        db.collection("users")
+        .document(user_id)
+        .collection("workspace")
+        .document("layout")
+        .get()
+    )
+    if doc.exists:
+        return doc.to_dict()
+    return None
+
+
+def save_workspace_layout(user_id: str, snapshot: dict[str, Any]) -> None:
+    """Save the workspace layout snapshot to Firestore.
+
+    Overwrites any existing layout.
+    Firestore path: users/{uid}/workspace/layout
+    """
+    db = firestore.client()
+    db.collection("users").document(user_id).collection("workspace").document(
+        "layout"
+    ).set(snapshot)

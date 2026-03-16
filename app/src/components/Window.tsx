@@ -11,6 +11,17 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
+/** Serializable snapshot of a WinBox window's geometry + flags */
+export interface WindowState {
+  x: number
+  y: number
+  width: number
+  height: number
+  minimized: boolean
+  maximized: boolean
+  zIndex: number
+}
+
 interface WindowProps {
   /** Unique identifier for this window */
   id: string
@@ -40,6 +51,10 @@ interface WindowProps {
   onMinimize?: (id: string) => void
   /** Called when the window is maximized */
   onMaximize?: (id: string) => void
+  /** Called when the window is restored from minimize/maximize */
+  onRestore?: (id: string) => void
+  /** Called when the window is moved or resized (debounced by caller) */
+  onStateChange?: (id: string, state: WindowState) => void
   /** Titlebar icon URL */
   icon?: string
   /** Background color/gradient */
@@ -69,6 +84,8 @@ export default function Window({
   onFocus,
   onMinimize,
   onMaximize,
+  onRestore,
+  onStateChange,
   icon,
   background,
   border = 1,
@@ -89,6 +106,25 @@ export default function Window({
   onMinimizeRef.current = onMinimize
   const onMaximizeRef = useRef(onMaximize)
   onMaximizeRef.current = onMaximize
+  const onRestoreRef = useRef(onRestore)
+  onRestoreRef.current = onRestore
+  const onStateChangeRef = useRef(onStateChange)
+  onStateChangeRef.current = onStateChange
+
+  /** Read current state from the live WinBox instance */
+  function emitState() {
+    const wb = winboxRef.current
+    if (!wb || !onStateChangeRef.current) return
+    onStateChangeRef.current(id, {
+      x: wb.x,
+      y: wb.y,
+      width: wb.width,
+      height: wb.height,
+      minimized: !!wb.min,
+      maximized: !!wb.max,
+      zIndex: wb.index ?? 0,
+    })
+  }
 
   // Create WinBox instance on mount — dynamic import to avoid SSR crash
   useEffect(() => {
@@ -132,17 +168,33 @@ export default function Window({
         },
         onfocus() {
           onFocusRef.current?.(id)
+          emitState()
         },
         onminimize() {
           onMinimizeRef.current?.(id)
+          emitState()
         },
         onmaximize() {
           onMaximizeRef.current?.(id)
+          emitState()
+        },
+        onrestore() {
+          onRestoreRef.current?.(id)
+          emitState()
+        },
+        onmove() {
+          emitState()
+        },
+        onresize() {
+          emitState()
         },
       })
 
       winboxRef.current = wb
       setMounted(true)
+
+      // Emit initial state after creation
+      emitState()
     }
 
     create()

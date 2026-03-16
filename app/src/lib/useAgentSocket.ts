@@ -12,14 +12,12 @@
  *   - **Auto-connect** when a valid token is available (no manual connect call)
  *   - Auto-reconnect with exponential backoff on unexpected disconnects
  *   - Always-on: WebSocket stays connected regardless of mic/orb state
- *   - Session resumption: stores the latest resumption handle from the server
- *     and passes it on reconnect for seamless session continuity
  *
  * Protocol:
  *   - Send text: JSON { type: "text", text: "..." }
  *   - Send audio: raw binary frames (PCM 16kHz 16-bit)
  *   - Receive: JSON-encoded ADK Event objects (text, audio, transcriptions,
- *     turn_complete, interrupted, errors, partial, resumption updates)
+ *     turn_complete, interrupted, errors, partial)
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -60,9 +58,6 @@ export function useAgentSocket({
   // Reconnect state
   const retryCountRef = useRef(0)
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Session resumption handle — updated by server, sent on reconnect
-  const resumptionHandleRef = useRef<string | null>(null)
 
   // Keep mutable refs so the connect function stays stable across renders
   const tokenRef = useRef(token)
@@ -106,12 +101,7 @@ export function useAgentSocket({
       // Convert http(s):// to ws(s)://
       const httpBase = apiBaseRef.current
       const wsBase = httpBase.replace(/^http/, 'ws')
-      let url = `${wsBase}/ws/${currentWorkspaceId}?token=${encodeURIComponent(currentToken)}`
-
-      // Pass resumption handle on reconnect for seamless session continuity
-      if (resumptionHandleRef.current) {
-        url += `&resumptionHandle=${encodeURIComponent(resumptionHandleRef.current)}`
-      }
+      const url = `${wsBase}/ws/${currentWorkspaceId}?token=${encodeURIComponent(currentToken)}`
 
       const socket = new WebSocket(url)
       wsRef.current = socket
@@ -134,14 +124,8 @@ export function useAgentSocket({
           return
         }
 
-        // Extract and store resumption handle before forwarding to consumer
+        // Extract and forward to consumer
         const evt = data as WsEvent
-        const resumption = evt.liveSessionResumptionUpdate as
-          | { newHandle?: string }
-          | undefined
-        if (resumption?.newHandle) {
-          resumptionHandleRef.current = resumption.newHandle
-        }
 
         try {
           onEventRef.current?.(evt)

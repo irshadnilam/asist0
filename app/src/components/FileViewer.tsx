@@ -160,34 +160,47 @@ export default function FileViewer({ fileId, token }: FileViewerProps) {
   const fileType = useMemo(() => getFileType(fileId), [fileId])
   const filename = useMemo(() => fileId.split('/').pop() || fileId, [fileId])
 
-  // Load file content (skip for unsupported types)
-  useEffect(() => {
+  // Fetch file content from backend
+  const fetchContent = useCallback(async () => {
     if (fileType === 'unsupported') {
       setLoading(false)
       return
     }
-    let cancelled = false
-    async function load() {
-      try {
-        setLoading(true)
-        setError(null)
-        const result = await readFileContent({ data: { token, fileId } })
-        if (cancelled) return
-        setContent(result.content)
-        setEncoding(result.encoding)
-        setContentType(result.contentType)
-        contentRef.current = result.content
-        setPreviewContent(result.content)
-      } catch (err) {
-        if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Failed to load file')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+    try {
+      setLoading(true)
+      setError(null)
+      const result = await readFileContent({ data: { token, fileId } })
+      setContent(result.content)
+      setEncoding(result.encoding)
+      setContentType(result.contentType)
+      contentRef.current = result.content
+      setPreviewContent(result.content)
+      setDirty(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load file')
+    } finally {
+      setLoading(false)
     }
-    load()
+  }, [fileId, token, fileType])
+
+  // Load on mount
+  useEffect(() => {
+    let cancelled = false
+    fetchContent().then(() => {
+      if (cancelled) return
+    })
     return () => { cancelled = true }
-  }, [fileId, token])
+  }, [fetchContent])
+
+  // Refresh handler — re-fetches content, resets editor
+  const handleRefresh = useCallback(async () => {
+    // Destroy existing editor so it gets recreated with fresh content
+    if (viewRef.current) {
+      viewRef.current.destroy()
+      viewRef.current = null
+    }
+    await fetchContent()
+  }, [fetchContent])
 
   // Initialize CodeMirror
   useEffect(() => {
@@ -313,6 +326,15 @@ export default function FileViewer({ fileId, token }: FileViewerProps) {
           )}
         </div>
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={loading}
+            className="rounded px-2 py-0.5 text-xs text-[#484f58] transition hover:text-[#c9d1d9] disabled:opacity-30"
+            title="Refresh file content"
+          >
+            refresh
+          </button>
           {fileType === 'pdf' && numPages > 0 && (
             <>
               <button
