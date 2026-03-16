@@ -35,8 +35,6 @@ function formatDoc(doc: DocumentData): FileItem {
 interface UseFilesResult {
   /** All files for the user (flat list, all depths) */
   allFiles: FileItem[]
-  /** Root-level files only (single path segment) */
-  rootFiles: FileItem[]
   /** Get direct children of a parent path */
   getChildren: (parentId: string) => FileItem[]
   /** Whether the initial snapshot has loaded */
@@ -66,28 +64,20 @@ export function useFiles(uid: string | null): UseFilesResult {
       colRef,
       (snapshot) => {
         const files = snapshot.docs.map(formatDoc)
-        console.log('[asisto] realtime: files updated,', files.length, 'total')
         setAllFiles(files)
         setLoading(false)
       },
       (err) => {
-        console.error('[asisto] realtime: subscription error:', err)
+        console.error('[asisto] firestore subscription error:', err)
         setError(err.message)
         setLoading(false)
       },
     )
 
     return () => {
-      console.log('[asisto] realtime: unsubscribing')
       unsub()
     }
   }, [uid])
-
-  // Root-level files: single path segment (e.g. "/readme.md")
-  const rootFiles = allFiles.filter((f) => {
-    const parts = f.id.replace(/^\//, '').split('/')
-    return parts.length === 1 && parts[0] !== ''
-  })
 
   // Get direct children of a parent path
   const getChildren = (parentId: string): FileItem[] => {
@@ -100,5 +90,5 @@ export function useFiles(uid: string | null): UseFilesResult {
     })
   }
 
-  return { allFiles, rootFiles, getChildren, loading, error }
+  return { allFiles, getChildren, loading, error }
 }

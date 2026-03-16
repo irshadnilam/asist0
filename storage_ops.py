@@ -124,6 +124,34 @@ def list_files(
         return results
 
 
+def list_all_files(
+    user_id: str,
+    bucket_name: str | None = None,
+) -> list[dict[str, Any]]:
+    """List ALL files for a user (flat list, all depths).
+
+    Used by search and info tools. Returns every file/folder.
+    """
+    col = _files_col(user_id)
+    all_docs = col.get()
+    return [_format_file(doc.to_dict()) for doc in all_docs]
+
+
+def get_file_info(
+    user_id: str,
+    file_id: str,
+    bucket_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Get metadata for a specific file by path.
+
+    Returns formatted file dict or None if not found.
+    """
+    _, doc = _find_doc(user_id, file_id)
+    if doc and doc.exists:
+        return _format_file(doc.to_dict())
+    return None
+
+
 def _format_file(data: dict) -> dict[str, Any]:
     """Format a Firestore doc into SVAR file format."""
     result = {
@@ -531,25 +559,30 @@ def write_file(
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SKILLS: dict[str, dict[str, str]] = {
-    "prompt-helper": {
+    "workspace-helper": {
         "SKILL.md": (
             "---\n"
-            "name: prompt-helper\n"
-            "description: Helps craft better prompts for AI models."
-            " Use when the user asks for help writing, improving,"
-            " or structuring a prompt.\n"
+            "name: workspace-helper\n"
+            "description: Helps organize the workspace — scaffolds projects,"
+            " cleans up files, creates folder structures, and manages the file tree."
+            " Use when the user asks to organize, set up, clean, or restructure"
+            " their workspace.\n"
             "---\n"
-            "You are a prompt engineering expert."
-            " When the user asks for help with a prompt:\n\n"
-            "Step 1: Understand what the user wants the prompt to achieve.\n"
-            "Step 2: Apply these principles:\n"
-            "  - Be specific and explicit about the desired output format\n"
-            "  - Provide context and constraints\n"
-            "  - Use examples when helpful (few-shot)\n"
-            "  - Break complex tasks into steps\n"
-            "  - Specify the role/persona for the AI\n"
-            "Step 3: Present the improved prompt clearly.\n"
-            "Step 4: Explain what you changed and why.\n"
+            "You help the user organize their workspace.\n\n"
+            "When the user asks to organize or set up a project:\n"
+            "1. Use list_files to understand the current state.\n"
+            "2. Propose a folder structure before creating anything.\n"
+            "3. Create folders and files only after the user confirms.\n"
+            "4. When scaffolding, create real content — not empty placeholder files.\n\n"
+            "When the user asks to clean up:\n"
+            "1. List all files and identify candidates (empty files, duplicates, temp files).\n"
+            "2. Present the list and ask which to delete.\n"
+            "3. Never delete without confirmation.\n\n"
+            "Common structures to suggest:\n"
+            "- `/docs/` — documentation and notes\n"
+            "- `/projects/{name}/` — project files\n"
+            "- `/skills/` — agent skills (already exists)\n"
+            "- `/archive/` — old or completed work\n"
         ),
     },
     "code-review": {
@@ -557,18 +590,19 @@ _DEFAULT_SKILLS: dict[str, dict[str, str]] = {
             "---\n"
             "name: code-review\n"
             "description: Reviews code for bugs, security issues, and best"
-            " practices. Use when the user asks for a code review or wants"
-            " feedback on code.\n"
+            " practices. Use when the user asks for a code review, wants"
+            " feedback on code, or asks you to check a file.\n"
             "---\n"
             "You are a senior software engineer performing a code review.\n\n"
-            "Step 1: Read the code carefully.\n"
-            "Step 2: Check the 'references/checklist.md' for the review criteria.\n"
+            "Step 1: Use read_file to read the code the user wants reviewed.\n"
+            "Step 2: Check 'references/checklist.md' for the review criteria.\n"
             "Step 3: Analyze the code against each criterion.\n"
             "Step 4: Provide feedback organized by severity:\n"
             "  - **Critical**: Bugs, security vulnerabilities, data loss risks\n"
-            "  - **Warning**: Performance issues, potential edge cases, maintainability\n"
-            "  - **Suggestion**: Style improvements, readability, best practices\n"
-            "Step 5: For each issue, provide the specific line/section and a suggested fix.\n"
+            "  - **Warning**: Performance issues, potential edge cases\n"
+            "  - **Suggestion**: Style, readability, best practices\n"
+            "Step 5: For each issue, state the specific location and a suggested fix.\n"
+            "Step 6: Offer to write the fixes directly using write_file.\n"
         ),
         "references/checklist.md": (
             "# Code Review Checklist\n\n"
@@ -595,22 +629,164 @@ _DEFAULT_SKILLS: dict[str, dict[str, str]] = {
             "- Consistent formatting\n"
         ),
     },
-    "summarize": {
+    "note-taker": {
         "SKILL.md": (
             "---\n"
-            "name: summarize\n"
-            "description: Summarizes text, documents, or conversations into"
-            " concise overviews. Use when the user asks for a summary or wants"
-            " to condense information.\n"
+            "name: note-taker\n"
+            "description: Takes notes, writes documentation, and captures"
+            " ideas. Use when the user asks you to write down something,"
+            " take notes, create a document, summarize something into a file,"
+            " or draft text.\n"
             "---\n"
-            "You are an expert at distilling information into clear, concise summaries.\n\n"
-            "Step 1: Read the full content provided by the user.\n"
-            "Step 2: Identify the key themes, arguments, and conclusions.\n"
-            "Step 3: Produce a summary following this structure:\n"
-            "  - **One-line summary**: A single sentence capturing the essence\n"
-            "  - **Key points**: 3-5 bullet points with the most important takeaways\n"
-            "  - **Details**: A short paragraph expanding on nuances (if needed)\n"
-            "Step 4: Adjust length based on the user's request (brief, detailed, etc.).\n"
+            "You help the user capture and organize information as files.\n\n"
+            "When taking notes:\n"
+            "1. Ask where to save (suggest /docs/ or /notes/ if no preference).\n"
+            "2. Use clear markdown formatting: headings, bullet points, code blocks.\n"
+            "3. Write the note immediately using write_file — don't just read it back.\n"
+            "4. Confirm: 'Written to /docs/filename.md'\n\n"
+            "When summarizing to a file:\n"
+            "1. First produce the summary in conversation.\n"
+            "2. Then offer to save it: 'Want me to save this to a file?'\n"
+            "3. If yes, write it immediately.\n\n"
+            "When drafting longer documents:\n"
+            "1. Write a first draft and save it.\n"
+            "2. Read it back and discuss changes.\n"
+            "3. Use write_file to apply revisions.\n"
+            "4. The user can also edit the file directly in their editor"
+            " — offer to read and review their changes.\n"
+        ),
+    },
+    "learn-skill": {
+        "SKILL.md": (
+            "---\n"
+            "name: learn-skill\n"
+            "description: >-\n"
+            "  Creates new skills or improves existing ones. Use when the user says\n"
+            "  'learn this', 'remember how to', 'teach you', 'add a skill',\n"
+            "  'create a skill', 'you should know how to', or when you identify a\n"
+            "  repeated workflow worth capturing.\n"
+            "---\n"
+            "You are building a new skill for yourself. Skills persist across sessions\n"
+            "and make you better at helping the user over time.\n\n"
+            "## Creating a New Skill\n\n"
+            "Step 1: Clarify the skill with the user.\n"
+            "  - What should the skill do? (the WHAT)\n"
+            "  - When should you use it? (the WHEN — trigger phrases/contexts)\n"
+            "  - How should it work? (the HOW — step-by-step process)\n"
+            "  - Does it need reference materials, templates, or scripts?\n\n"
+            "Step 2: Choose a short, lowercase, hyphenated name (e.g. 'api-tester').\n\n"
+            "Step 3: Create the skill directory structure:\n"
+            "  a. create_folder '/skills/{name}'\n"
+            "  b. write_file '/skills/{name}/SKILL.md' with proper frontmatter + instructions\n"
+            "  c. If references needed: create_folder '/skills/{name}/references'\n"
+            "     then write_file each reference document\n"
+            "  d. If scripts needed: create_folder '/skills/{name}/scripts'\n"
+            "     then write_file each .py or .sh script\n"
+            "  e. If templates/assets needed: create_folder '/skills/{name}/assets'\n"
+            "     then write_file each asset\n\n"
+            "Step 4: Read back the SKILL.md to verify it's well-formed.\n\n"
+            "Step 5: Tell the user: 'Skill created. It will be active next session,\n"
+            "  or you can reconnect to load it now.'\n\n"
+            "## SKILL.md Template\n\n"
+            "Use this exact format:\n\n"
+            "```\n"
+            "---\n"
+            "name: {skill-name}\n"
+            "description: >-\n"
+            "  Clear description of WHEN to use this skill. Include trigger phrases\n"
+            "  like 'Use when the user asks to...' or 'Use when...'.\n"
+            "---\n"
+            "Context about the skill's purpose.\n\n"
+            "Step 1: ...\n"
+            "Step 2: ...\n"
+            "(Use actual tool names: read_file, write_file, list_files, search_files, etc.)\n"
+            "```\n\n"
+            "## Writing Skill Scripts\n\n"
+            "Scripts in `/scripts/` run in a sandbox (Python or shell).\n"
+            "Use scripts for:\n"
+            "- Data processing or transformation\n"
+            "- Calculations or analysis\n"
+            "- Text formatting or conversion\n"
+            "- Any logic easier in code than natural language\n\n"
+            "Script requirements:\n"
+            "- Python scripts must be self-contained (stdlib only)\n"
+            "- Use print() for output the agent will read\n"
+            "- Keep scripts focused — one task per script\n"
+            "- Add a docstring explaining what the script does\n\n"
+            "## Improving an Existing Skill\n\n"
+            "Step 1: read_file '/skills/{name}/SKILL.md'\n"
+            "Step 2: Discuss what needs improvement with the user.\n"
+            "Step 3: write_file the updated SKILL.md (or references/scripts).\n"
+            "Step 4: Confirm the changes.\n\n"
+            "## Listing Skills\n\n"
+            "If the user asks 'what skills do you have' or 'what can you do':\n"
+            "1. list_files '/skills' to see all skill folders.\n"
+            "2. For each, read_file the SKILL.md to get the name and description.\n"
+            "3. Summarize: 'You have N skills: ...' with a one-liner per skill.\n"
+        ),
+        "references/skill-spec.md": (
+            "# Agent Skills Specification Reference\n\n"
+            "Based on https://agentskills.io/specification\n\n"
+            "## Directory Structure\n\n"
+            "```\n"
+            "/skills/{skill-name}/\n"
+            "  SKILL.md              <- Required: YAML frontmatter + markdown body\n"
+            "  references/           <- Optional: detailed docs, checklists\n"
+            "  assets/               <- Optional: templates, data files\n"
+            "  scripts/              <- Optional: .py or .sh scripts\n"
+            "```\n\n"
+            "## SKILL.md Frontmatter Fields\n\n"
+            "Required:\n"
+            "- `name`: Short identifier (lowercase, hyphenated)\n"
+            "- `description`: When to use this skill (be specific about triggers)\n\n"
+            "Optional:\n"
+            "- `metadata`: Key-value pairs for additional config\n\n"
+            "## Best Practices\n\n"
+            "1. **Trigger-first descriptions** — Start with 'Use when...'\n"
+            "2. **Tool-aware instructions** — Reference actual tool names\n"
+            "3. **Progressive detail** — Keep SKILL.md focused, put depth in references/\n"
+            "4. **Testable steps** — Each step should produce a verifiable result\n"
+            "5. **Error paths** — Include what to do when things go wrong\n"
+            "6. **Confirmation gates** — Destructive actions need user approval\n"
+        ),
+        "scripts/scaffold_skill.py": (
+            '"""Scaffold a new skill directory structure.\n\n'
+            "Prints the list of files that need to be created for a new skill.\n"
+            "The agent reads this output and uses write_file/create_folder to create them.\n"
+            '"""\n\n'
+            "import sys\n"
+            "import json\n\n"
+            "def scaffold(skill_name: str, has_references: bool = False,\n"
+            "             has_scripts: bool = False, has_assets: bool = False) -> dict:\n"
+            '    """Generate the file structure for a new skill."""\n'
+            '    base = f"/skills/{skill_name}"\n'
+            "    structure = {\n"
+            '        "folders": [base],\n'
+            '        "files": {\n'
+            '            f"{base}/SKILL.md": (\n'
+            '                f"---\\n"\n'
+            '                f"name: {skill_name}\\n"\n'
+            '                f"description: >-\\n"\n'
+            '                f"  TODO: Describe when to use this skill.\\n"\n'
+            '                f"---\\n"\n'
+            '                f"TODO: Step-by-step instructions.\\n"\n'
+            "            ),\n"
+            "        },\n"
+            "    }\n"
+            "    if has_references:\n"
+            '        structure["folders"].append(f"{base}/references")\n'
+            "    if has_scripts:\n"
+            '        structure["folders"].append(f"{base}/scripts")\n'
+            "    if has_assets:\n"
+            '        structure["folders"].append(f"{base}/assets")\n'
+            "    return structure\n\n"
+            'if __name__ == "__main__":\n'
+            '    name = sys.argv[1] if len(sys.argv) > 1 else "new-skill"\n'
+            "    result = scaffold(name,\n"
+            '        has_references="--references" in sys.argv,\n'
+            '        has_scripts="--scripts" in sys.argv,\n'
+            '        has_assets="--assets" in sys.argv)\n'
+            "    print(json.dumps(result, indent=2))\n"
         ),
     },
 }

@@ -3,11 +3,11 @@
  *   - Code/text: CodeMirror 6 editor with syntax highlighting
  *   - Markdown: CodeMirror + live preview side-by-side
  *   - Images: <img> display
+ *   - PDF: react-pdf viewer with page navigation
  *
  * Props:
  *   fileId: full path like '/readme.md'
  *   token: Firebase ID token
- *   onClose: callback to close the viewer
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -24,25 +24,58 @@ import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
 import { xml } from '@codemirror/lang-xml'
 import { yaml } from '@codemirror/lang-yaml'
+import { Document, Page, pdfjs } from 'react-pdf'
+import 'react-pdf/dist/Page/AnnotationLayer.css'
+import 'react-pdf/dist/Page/TextLayer.css'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { readFileContent, saveFileContent } from '../lib/api'
 
+// Configure pdf.js worker
+pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
+
 // --- File type detection ---
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'avif'])
+const PDF_EXTS = new Set(['pdf'])
 const MD_EXTS = new Set(['md', 'mdx', 'markdown'])
+const TEXT_EXTS = new Set([
+  'txt', 'log', 'csv', 'tsv', 'env', 'gitignore', 'gitattributes',
+  'dockerignore', 'editorconfig', 'prettierrc', 'eslintrc',
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx',
+  'html', 'htm', 'css', 'scss', 'less',
+  'json', 'jsonc', 'json5',
+  'py', 'pyi', 'pyw',
+  'rb', 'rs', 'go', 'java', 'kt', 'c', 'h', 'cpp', 'hpp', 'cs', 'swift',
+  'xml', 'xsl', 'xsd',
+  'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf',
+  'sh', 'bash', 'zsh', 'fish', 'bat', 'ps1',
+  'sql', 'graphql', 'gql',
+  'tf', 'hcl',
+  'makefile', 'cmake',
+  'r', 'lua', 'pl', 'pm', 'php',
+  'vue', 'svelte', 'astro',
+  'diff', 'patch',
+  'lock',
+])
 
 function getExt(fileId: string): string {
   const parts = fileId.split('.')
   return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : ''
 }
 
-function getFileType(fileId: string): 'image' | 'markdown' | 'code' {
+function getFileType(fileId: string): 'image' | 'pdf' | 'markdown' | 'code' | 'unsupported' {
   const ext = getExt(fileId)
   if (IMAGE_EXTS.has(ext)) return 'image'
+  if (PDF_EXTS.has(ext)) return 'pdf'
   if (MD_EXTS.has(ext)) return 'markdown'
-  return 'code'
+  // No extension → treat as plain text (e.g. Makefile, Dockerfile, LICENSE)
+  if (!ext) return 'code'
+  if (TEXT_EXTS.has(ext)) return 'code'
+  // Also allow any file named like a known dotfile
+  const name = fileId.split('/').pop()?.toLowerCase() || ''
+  if (['makefile', 'dockerfile', 'license', 'readme', 'changelog', 'codeowners'].includes(name)) return 'code'
+  return 'unsupported'
 }
 
 function getLanguageExtension(fileId: string) {
@@ -104,10 +137,9 @@ function getContentType(fileId: string): string {
 interface FileViewerProps {
   fileId: string
   token: string
-  onClose: () => void
 }
 
-export default function FileViewer({ fileId, token, onClose }: FileViewerProps) {
+export default function FileViewer({ fileId, token }: FileViewerProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [content, setContent] = useState('')
@@ -117,6 +149,8 @@ export default function FileViewer({ fileId, token, onClose }: FileViewerProps) 
   const [saving, setSaving] = useState(false)
   const [showPreview, setShowPreview] = useState(true)
   const [previewContent, setPreviewContent] = useState('')
+  const [numPages, setNumPages] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
 
   const editorRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -126,8 +160,12 @@ export default function FileViewer({ fileId, token, onClose }: FileViewerProps) 
   const fileType = useMemo(() => getFileType(fileId), [fileId])
   const filename = useMemo(() => fileId.split('/').pop() || fileId, [fileId])
 
-  // Load file content
+  // Load file content (skip for unsupported types)
   useEffect(() => {
+    if (fileType === 'unsupported') {
+      setLoading(false)
+      return
+    }
     let cancelled = false
     async function load() {
       try {
@@ -153,7 +191,7 @@ export default function FileViewer({ fileId, token, onClose }: FileViewerProps) 
 
   // Initialize CodeMirror
   useEffect(() => {
-    if (loading || error || fileType === 'image' || !editorRef.current) return
+    if (loading || error || fileType === 'image' || fileType === 'pdf' || fileType === 'unsupported' || !editorRef.current) return
     if (viewRef.current) {
       viewRef.current.destroy()
       viewRef.current = null
@@ -241,7 +279,6 @@ export default function FileViewer({ fileId, token, onClose }: FileViewerProps) 
         },
       })
       setDirty(false)
-      console.log('[asisto] file saved:', fileId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
@@ -276,6 +313,29 @@ export default function FileViewer({ fileId, token, onClose }: FileViewerProps) 
           )}
         </div>
         <div className="flex items-center gap-1">
+          {fileType === 'pdf' && numPages > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className="rounded px-2 py-0.5 text-xs text-[#484f58] transition hover:text-[#c9d1d9] disabled:opacity-30"
+              >
+                prev
+              </button>
+              <span className="text-xs text-[#8b949e]">
+                {currentPage} / {numPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
+                disabled={currentPage >= numPages}
+                className="rounded px-2 py-0.5 text-xs text-[#484f58] transition hover:text-[#c9d1d9] disabled:opacity-30"
+              >
+                next
+              </button>
+            </>
+          )}
           {fileType === 'markdown' && (
             <button
               type="button"
@@ -289,7 +349,7 @@ export default function FileViewer({ fileId, token, onClose }: FileViewerProps) 
               preview
             </button>
           )}
-          {fileType !== 'image' && (
+          {fileType !== 'image' && fileType !== 'pdf' && fileType !== 'unsupported' && (
             <button
               type="button"
               onClick={handleSave}
@@ -313,6 +373,38 @@ export default function FileViewer({ fileId, token, onClose }: FileViewerProps) 
       {loading ? (
         <div className="flex flex-1 items-center justify-center">
           <span className="text-sm text-[#484f58]">loading...</span>
+        </div>
+      ) : fileType === 'unsupported' ? (
+        /* Unsupported file type */
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
+          <span className="text-sm text-[#484f58]">
+            This file type is not currently supported.
+          </span>
+          <span className="text-xs text-[#30363d]">
+            .{getExt(fileId) || '(unknown)'} files cannot be previewed or edited.
+          </span>
+        </div>
+      ) : fileType === 'pdf' ? (
+        /* PDF viewer */
+        <div className="flex flex-1 items-center justify-center overflow-auto bg-[#161b22] p-4">
+          <Document
+            file={`data:application/pdf;base64,${content}`}
+            onLoadSuccess={({ numPages: n }) => setNumPages(n)}
+            loading={
+              <span className="text-sm text-[#484f58]">loading pdf...</span>
+            }
+            error={
+              <span className="text-sm text-[#f85149]">Failed to load PDF.</span>
+            }
+            className="pdf-document"
+          >
+            <Page
+              pageNumber={currentPage}
+              renderTextLayer={true}
+              renderAnnotationLayer={true}
+              className="pdf-page"
+            />
+          </Document>
         </div>
       ) : fileType === 'image' ? (
         /* Image viewer */

@@ -154,9 +154,10 @@ def _parse_skill_dir(
     )
     fm_metadata = frontmatter.get("metadata", {})
 
-    # Build resources: references/ and assets/
+    # Build resources: references/, assets/, and scripts/
     references: dict[str, str] = {}
     assets: dict[str, str] = {}
+    scripts: dict[str, skill_models.Script] = {}
 
     for file_path, content_bytes in files.items():
         if file_path == "SKILL.md":
@@ -165,7 +166,7 @@ def _parse_skill_dir(
         try:
             text = content_bytes.decode("utf-8")
         except UnicodeDecodeError:
-            # Skip binary files in references
+            # Skip binary files
             continue
 
         if file_path.startswith("references/"):
@@ -174,20 +175,34 @@ def _parse_skill_dir(
         elif file_path.startswith("assets/"):
             asset_name = file_path[len("assets/") :]
             assets[asset_name] = text
+        elif file_path.startswith("scripts/"):
+            script_name = file_path[len("scripts/") :]
+            scripts[script_name] = skill_models.Script(src=text)
 
-    # Build the Resources object (only if there are references)
+    # Build the Resources object (only if there's something to include)
     resources = None
-    if references or assets:
-        resources = skill_models.Resources(
-            references=references if references else None,
-        )
+    if references or assets or scripts:
+        resources_kwargs = {}
+        if references:
+            resources_kwargs["references"] = references
+        if assets:
+            resources_kwargs["assets"] = assets
+        if scripts:
+            resources_kwargs["scripts"] = scripts
+        resources = skill_models.Resources(**resources_kwargs)
 
-    return skill_models.Skill(
-        frontmatter=skill_models.Frontmatter(
-            name=fm_name,
-            description=fm_description,
-            metadata=fm_metadata if fm_metadata else None,
-        ),
-        instructions=instructions,
-        resources=resources,
-    )
+    frontmatter_kwargs = {
+        "name": fm_name,
+        "description": fm_description,
+    }
+    if fm_metadata:
+        frontmatter_kwargs["metadata"] = fm_metadata
+
+    skill_kwargs = {
+        "frontmatter": skill_models.Frontmatter(**frontmatter_kwargs),
+        "instructions": instructions,
+    }
+    if resources:
+        skill_kwargs["resources"] = resources
+
+    return skill_models.Skill(**skill_kwargs)

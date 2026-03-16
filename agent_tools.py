@@ -1,7 +1,7 @@
 """Agent file-operation tools backed by storage_ops.
 
-These tools let the Asisto agent create, read, write, list, and delete
-files in the user's Firebase Storage workspace via voice commands.
+These tools let the Asisto agent create, read, write, list, search, copy,
+and delete files in the user's Firebase Storage workspace via voice commands.
 
 Each tool is a plain Python function (closure) that captures the user_id
 and bucket_name from the session context. ADK auto-wraps them as FunctionTools.
@@ -12,6 +12,7 @@ Usage:
 """
 
 import logging
+import posixpath
 from typing import Any
 
 import storage_ops
@@ -84,7 +85,6 @@ def create_file_tools(
             Confirmation message with the file path.
         """
         logger.info(f"[tool] write_file: user={user_id}, path={path}")
-        # Determine content type from extension
         ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
         ct_map = {
             "md": "text/markdown",
@@ -123,7 +123,7 @@ def create_file_tools(
     def delete_file(path: str) -> str:
         """Delete a file or folder (and all its contents).
 
-        Use this carefully — deletion is permanent.
+        WARNING: Deletion is permanent. Always confirm with the user first.
 
         Args:
             path: Full path of the file or folder to delete, e.g. "/notes/old.md"
@@ -176,6 +176,87 @@ def create_file_tools(
             return f"Moved: {path} -> {results[0]['id']}"
         return f"Error: Could not move {path}"
 
+    def copy_file(path: str, destination: str) -> str:
+        """Copy a file or folder to a different directory.
+
+        The original stays in place. A copy is created in the destination.
+
+        Args:
+            path: Full path of the file/folder to copy, e.g. "/skills/prompt-helper"
+            destination: Target folder path, e.g. "/" or "/backups"
+
+        Returns:
+            Confirmation message with the new copy's location.
+        """
+        logger.info(
+            f"[tool] copy_file: user={user_id}, path={path}, dest={destination}"
+        )
+        results = storage_ops.move_files(
+            user_id, [path], destination, copy=True, bucket_name=bucket_name
+        )
+        if results:
+            return f"Copied: {path} -> {results[0]['id']}"
+        return f"Error: Could not copy {path}"
+
+    def search_files(query: str) -> list[dict[str, Any]]:
+        """Search for files by name across the entire workspace.
+
+        Searches all files and folders, matching against the filename or path.
+        Case-insensitive partial match.
+
+        Use this when the user asks "find", "search", "where is", "do I have",
+        or refers to a file by partial name.
+
+        Args:
+            query: Search term to match against file paths/names, e.g. "readme" or ".py"
+
+        Returns:
+            List of matching file entries with id, size, date, and type.
+        """
+        logger.info(f"[tool] search_files: user={user_id}, query={query}")
+        all_files = storage_ops.list_all_files(user_id, bucket_name)
+        q = query.lower()
+        matches = [
+            f
+            for f in all_files
+            if q in f["id"].lower() or q in posixpath.basename(f["id"]).lower()
+        ]
+        return matches
+
+    def get_file_info(path: str) -> dict[str, Any]:
+        """Get metadata about a specific file or folder.
+
+        Returns size, date, type, and full path. Useful when the user asks
+        "how big is this file" or "when was this created".
+
+        Args:
+            path: Full file path, e.g. "/readme.md"
+
+        Returns:
+            Dict with id, size, date, and type — or error message.
+        """
+        logger.info(f"[tool] get_file_info: user={user_id}, path={path}")
+        info = storage_ops.get_file_info(user_id, path, bucket_name)
+        if info:
+            return info
+        return {"error": f"File not found: {path}"}
+
+    def get_storage_usage() -> dict[str, Any]:
+        """Get the user's storage usage.
+
+        Returns used and total storage in bytes. Useful when the user asks
+        "how much space do I have" or "am I running out of storage".
+
+        Returns:
+            Dict with used (bytes), total (bytes), and used_pct (percentage).
+        """
+        logger.info(f"[tool] get_storage_usage: user={user_id}")
+        info = storage_ops.get_drive_info(user_id)
+        used = info.get("used", 0)
+        total = info.get("total", 1_073_741_824)
+        pct = round(used / total * 100, 1) if total > 0 else 0
+        return {"used": used, "total": total, "used_pct": pct}
+
     return [
         list_files,
         read_file,
@@ -184,4 +265,8 @@ def create_file_tools(
         delete_file,
         rename_file,
         move_file,
+        copy_file,
+        search_files,
+        get_file_info,
+        get_storage_usage,
     ]

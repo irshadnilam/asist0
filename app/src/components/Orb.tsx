@@ -15,8 +15,6 @@ import { useEffect, useRef } from 'react'
 interface OrbProps {
   /** Whether the orb is in active (listening/speaking) state */
   active?: boolean
-  /** Whether the orb is disabled (no workspace selected) */
-  disabled?: boolean
   /** Called when the orb is clicked */
   onToggle?: () => void
   /** Size in pixels (width & height) */
@@ -114,10 +112,10 @@ const FRAG = /* glsl */ `
     return vec4(colorIn.rgb / (a + 1e-5), a);
   }
 
-  const vec3 baseColor1 = vec3(0.611765, 0.262745, 0.996078);
-  const vec3 baseColor2 = vec3(0.298039, 0.760784, 0.913725);
-  const vec3 baseColor3 = vec3(0.062745, 0.078431, 0.600000);
-  const float innerRadius = 0.6;
+  const vec3 baseColor1 = vec3(0.70, 0.40, 1.0);
+  const vec3 baseColor2 = vec3(0.35, 0.82, 0.95);
+  const vec3 baseColor3 = vec3(0.15, 0.18, 0.75);
+  const float innerRadius = 0.45;
   const float noiseScale = 0.65;
 
   float light1(float intensity, float attenuation, float dist) {
@@ -165,6 +163,12 @@ const FRAG = /* glsl */ `
 
     vec3 finalCol = darkCol * brightness;
 
+    // Outer glow bloom — soft halo extending past the orb edge
+    float glowDist = max(len - r0, 0.0);
+    float glow = exp(-glowDist * 8.0) * brightness * 0.5;
+    vec3 glowCol = mix(color1, color2, 0.5) * glow;
+    finalCol += glowCol;
+
     return extractAlpha(finalCol);
   }
 
@@ -198,7 +202,7 @@ function hexToVec3(hex: string): Vec3 {
   return new Vec3(r, g, b)
 }
 
-export default function Orb({ active = false, disabled = false, onToggle, size = 64 }: OrbProps) {
+export default function Orb({ active = false, onToggle, size = 64 }: OrbProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef(active)
   activeRef.current = active
@@ -231,7 +235,7 @@ export default function Orb({ active = false, disabled = false, onToggle, size =
         hover: { value: 0 },
         rot: { value: 0 },
         hoverIntensity: { value: 0.3 },
-        brightness: { value: 0.4 },
+        brightness: { value: 0.8 },
         backgroundColor: { value: hexToVec3(bgColor) },
       },
     })
@@ -258,7 +262,7 @@ export default function Orb({ active = false, disabled = false, onToggle, size =
     resize()
 
     let currentRot = 0
-    let currentBrightness = 0.4
+    let currentBrightness = 0.8
     let currentHover = 0
     let lastTime = 0
 
@@ -271,11 +275,11 @@ export default function Orb({ active = false, disabled = false, onToggle, size =
       const isActive = activeRef.current
 
       // Animate time — faster when active
-      const timeSpeed = isActive ? 1.0 : 0.4
+      const timeSpeed = isActive ? 1.2 : 0.6
       program.uniforms.iTime.value += dt * timeSpeed
 
       // Smoothly interpolate brightness
-      const targetBrightness = isActive ? 1.2 : 0.4
+      const targetBrightness = isActive ? 1.5 : 0.8
       currentBrightness += (targetBrightness - currentBrightness) * 0.05
       program.uniforms.brightness.value = currentBrightness
 
@@ -285,7 +289,7 @@ export default function Orb({ active = false, disabled = false, onToggle, size =
       program.uniforms.hover.value = currentHover
 
       // Rotation — spins when active
-      const rotSpeed = isActive ? 0.5 : 0.05
+      const rotSpeed = isActive ? 0.6 : 0.1
       currentRot += dt * rotSpeed
       program.uniforms.rot.value = currentRot
 
@@ -294,7 +298,7 @@ export default function Orb({ active = false, disabled = false, onToggle, size =
       program.uniforms.hue.value +=
         (targetHue - program.uniforms.hue.value) * 0.05
 
-      program.uniforms.hoverIntensity.value = isActive ? 0.5 : 0.15
+      program.uniforms.hoverIntensity.value = isActive ? 0.6 : 0.2
 
       renderer.render({ scene: mesh })
     }
@@ -311,20 +315,15 @@ export default function Orb({ active = false, disabled = false, onToggle, size =
     }
   }, [])
 
-  const title = disabled
-    ? 'enter a workspace to start talking'
-    : active
-      ? 'tap to stop'
-      : 'tap to start'
+  const title = active ? 'tap to stop' : 'tap to start'
 
   return (
     <button
       type="button"
-      onClick={disabled ? undefined : onToggle}
-      className={`relative rounded-full transition-all duration-700 ${disabled ? 'cursor-not-allowed opacity-30' : 'cursor-pointer'}`}
+      onClick={onToggle}
+      className={`orb-button relative cursor-pointer rounded-full transition-all duration-700 ${active ? 'orb-active' : 'orb-idle'}`}
       style={{ width: size, height: size }}
       title={title}
-      aria-disabled={disabled}
     >
       <div
         ref={containerRef}

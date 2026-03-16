@@ -6,6 +6,12 @@
  * No AudioWorklet needed — simple and battle-tested.
  *
  * Gemini native-audio outputs PCM int16 LE at 24kHz mono.
+ *
+ * The player is lazily created on first `play()` call. If the browser
+ * suspends the AudioContext (autoplay policy), it will be resumed
+ * automatically — the first successful resume typically requires a
+ * prior user gesture (e.g. clicking the orb), which is guaranteed in
+ * our flow since the user must click the orb before mic audio is sent.
  */
 
 import { useCallback, useRef } from 'react'
@@ -19,8 +25,7 @@ export function useAudioPlayback() {
 
   /**
    * Lazily create the PCMPlayer instance.
-   * Must be called during a user gesture (click/tap) so the browser
-   * allows AudioContext creation without autoplay restrictions.
+   * Can be called at any time — will handle AudioContext autoplay policy.
    */
   const ensurePlayer = useCallback((): PCMPlayer => {
     if (playerRef.current) return playerRef.current
@@ -42,6 +47,7 @@ export function useAudioPlayback() {
 
   /**
    * Feed raw PCM data for playback.
+   * Auto-creates the player on first call and resumes AudioContext if suspended.
    * @param pcmBuffer - ArrayBuffer of PCM int16 LE audio (24kHz mono)
    */
   const play = useCallback(
@@ -94,5 +100,5 @@ export function useAudioPlayback() {
     }
   }, [])
 
-  return { play, stop, destroy, ensureInit: ensurePlayer }
+  return { play, stop, destroy }
 }

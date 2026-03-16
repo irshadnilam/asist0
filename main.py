@@ -25,17 +25,17 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import VertexAiSessionService
+from google.adk.sessions.base_session_service import GetSessionConfig
 from google.adk.memory import VertexAiMemoryBankService
 from google.genai import types
 
-from asisto_agent.agent import root_agent, create_agent
+from asisto_agent.agent import create_agent
 import agent_tools
 import storage_ops
 import skill_loader
@@ -138,12 +138,6 @@ memory_service = VertexAiMemoryBankService(
     project=PROJECT_ID,
     location=LOCATION,
     agent_engine_id=ENGINE_ID,
-)
-runner = Runner(
-    agent=root_agent,
-    app_name=APP_NAME,
-    session_service=session_service,
-    memory_service=memory_service,
 )
 
 
@@ -426,6 +420,10 @@ _FORWARD_KEYS = {
     "interrupted",
     "inputTranscription",
     "outputTranscription",
+    "errorCode",
+    "errorMessage",
+    "partial",
+    "liveSessionResumptionUpdate",
 }
 
 
@@ -464,6 +462,9 @@ async def websocket_endpoint(
     except Exception as e:
         await websocket.close(code=4001, reason=f"Invalid token: {e}")
         return
+
+    # Optional: resumption handle from a previous session for seamless reconnect
+    resumption_handle = websocket.query_params.get("resumptionHandle")
 
     logger.info(f"WebSocket connected: user_id={user_id}, workspace_id={workspace_id}")
     await websocket.accept()
@@ -506,27 +507,51 @@ async def websocket_endpoint(
     model_name = str(session_agent.model)
     is_native_audio = "native-audio" in model_name.lower()
 
+    # Session resumption config — allows seamless reconnect using a handle
+    session_resumption = types.SessionResumptionConfig(
+        handle=resumption_handle or None,
+        transparent=True,
+    )
+
+    # Don't replay past events when reusing a session — prevents old audio
+    # from being played back on connect. The session state is still available
+    # to the agent, just not re-streamed to the client.
+    get_session_config = GetSessionConfig(num_recent_events=0)
+
     if is_native_audio:
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["AUDIO"],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            session_resumption=session_resumption,
+            get_session_config=get_session_config,
         )
     else:
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=["TEXT"],
+            session_resumption=session_resumption,
+            get_session_config=get_session_config,
         )
 
-    # --- Get or create session (workspace_id maps to ADK session_id) ---
-    session = await session_service.get_session(
-        app_name=APP_NAME, user_id=user_id, session_id=workspace_id
+    # --- Get or create session ---
+    # VertexAiSessionService does not support user-provided session IDs.
+    # We list existing sessions for this user and reuse the first one,
+    # or create a new session if none exist.
+    sessions_response = await session_service.list_sessions(
+        app_name=APP_NAME, user_id=user_id
     )
-    if not session:
-        await session_service.create_session(
-            app_name=APP_NAME, user_id=user_id, session_id=workspace_id
+    if sessions_response.sessions:
+        session = sessions_response.sessions[0]
+        session_id = session.id
+        logger.info(f"Reusing session {session_id} for user {user_id}")
+    else:
+        session = await session_service.create_session(
+            app_name=APP_NAME, user_id=user_id
         )
+        session_id = session.id
+        logger.info(f"Created new session {session_id} for user {user_id}")
 
     live_request_queue = LiveRequestQueue()
 
@@ -566,7 +591,7 @@ async def websocket_endpoint(
         """Receives Events from run_live(), filters, and sends to WebSocket."""
         async for event in session_runner.run_live(
             user_id=user_id,
-            session_id=workspace_id,
+            session_id=session_id,
             live_request_queue=live_request_queue,
             run_config=run_config,
         ):
@@ -581,6 +606,15 @@ async def websocket_endpoint(
                 if not clean_parts:
                     del event_payload["content"]
                 else:
+                    # Pydantic serializes bytes as URL-safe base64 (- and _).
+                    # The browser's atob() requires standard base64 (+ and /).
+                    # Re-encode inline audio data to standard base64 here so the
+                    # frontend can decode with plain atob().
+                    for part in clean_parts:
+                        inline = part.get("inlineData")
+                        if inline and "data" in inline:
+                            raw = base64.urlsafe_b64decode(inline["data"])
+                            inline["data"] = base64.b64encode(raw).decode("ascii")
                     event_payload["content"]["parts"] = clean_parts
 
             # --- Build the forwarded message with only client-relevant keys ---
@@ -606,6 +640,13 @@ async def websocket_endpoint(
                 elif isinstance(t, str):
                     logger.info(f"[agent] {t}")
 
+            # Log errors
+            if "errorCode" in msg or "errorMessage" in msg:
+                logger.error(
+                    f"Agent error: code={msg.get('errorCode')}, "
+                    f"message={msg.get('errorMessage')}"
+                )
+
             await websocket.send_text(json.dumps(msg))
 
     # Run both tasks concurrently
@@ -614,9 +655,14 @@ async def websocket_endpoint(
     except (WebSocketDisconnect, RuntimeError):
         pass
     except Exception as e:
-        logger.error(f"Error in streaming tasks: {e}", exc_info=True)
+        logger.error(f"WebSocket error: {e}")
     finally:
         live_request_queue.close()
+        # Ensure clean close so the client can detect disconnect and reconnect
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
-export interface WindowProps {
+interface WindowProps {
   /** Unique identifier for this window */
   id: string
   /** Window title (shown in title bar) */

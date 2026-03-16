@@ -19,3 +19,9 @@ config.yaml
 # Pulumi
 infra/venv/
 infra/.pulumi/
+
+# Firebase
+firebase-debug.log
+
+# ADK local session database
+.adk/

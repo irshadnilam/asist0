@@ -39,7 +39,6 @@ function AppPage() {
   // Firestore realtime file subscription
   const {
     allFiles,
-    rootFiles,
     getChildren,
     loading: filesLoading,
     error: filesError,
@@ -71,25 +70,35 @@ function AppPage() {
     setOpenWindows((prev) => prev.filter((id) => id !== fileId))
   }, [])
 
-  // --- Agent voice connection state ---
-  const [agentActive, setAgentActive] = useState(false)
+  // --- Agent state ---
+  // micActive = orb is on, user is speaking. WebSocket is always-on independently.
+  const [micActive, setMicActive] = useState(false)
   const [transcript, setTranscript] = useState<string>('')
+  const [agentError, setAgentError] = useState<string | null>(null)
+  const [agentStreaming, setAgentStreaming] = useState(false)
   const WORKSPACE_ID = 'default'
 
-  // WebSocket hook — direct browser-to-backend connection
+  // Audio playback (PCM 24kHz from Gemini → speaker) — always ready
+  const {
+    play: playAudio,
+    stop: stopAudio,
+    destroy: destroyAudio,
+  } = useAudioPlayback()
+
+  // WebSocket hook — auto-connects when idToken is available, always stays connected
   const handleWsEvent = useCallback(
     (event: WsEvent) => {
-      // Audio data: base64 inline data → PCM playback
+      // Audio data: base64 inline data → PCM playback (always plays)
       const content = event.content as
         | { parts?: Array<{ inlineData?: { data: string } }> }
         | undefined
       if (content?.parts) {
         for (const part of content.parts) {
           if (part.inlineData?.data) {
-            const raw = atob(part.inlineData.data)
-            const buf = new ArrayBuffer(raw.length)
+            const binStr = atob(part.inlineData.data)
+            const buf = new ArrayBuffer(binStr.length)
             const view = new Uint8Array(buf)
-            for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i)
+            for (let i = 0; i < binStr.length; i++) view[i] = binStr.charCodeAt(i)
             playAudio(buf)
           }
         }
@@ -109,49 +118,53 @@ function AppPage() {
         setTranscript(outputT.text)
       }
 
-      // On interrupt, stop audio playback
+      // On interrupt, stop audio playback buffer
       if (event.interrupted) {
         stopAudio()
+      }
+
+      // Streaming indicator: partial=true means agent is mid-response
+      if (event.partial === true) {
+        setAgentStreaming(true)
+      }
+
+      // Turn complete: agent finished responding
+      if (event.turnComplete) {
+        setAgentStreaming(false)
+      }
+
+      // Agent errors — show to user briefly, auto-dismiss after 8s
+      if (event.errorCode || event.errorMessage) {
+        const errMsg = (event.errorMessage as string) || (event.errorCode as string) || 'Unknown error'
+        setAgentError(errMsg)
+        setTimeout(() => setAgentError(null), 8000)
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
 
-  const { status: wsStatus, connect, disconnect, sendAudio } = useAgentSocket({
+  const { status: wsStatus, sendAudio } = useAgentSocket({
     workspaceId: WORKSPACE_ID,
     token: idToken,
     onEvent: handleWsEvent,
   })
 
   // Audio capture (mic → PCM 16kHz → WebSocket)
-  const { start: startMic, stop: stopMic, isCapturing } = useAudioCapture({
+  const { start: startMic, stop: stopMic } = useAudioCapture({
     onChunk: sendAudio,
   })
 
-  // Audio playback (PCM 24kHz from Gemini → speaker)
-  const {
-    play: playAudio,
-    stop: stopAudio,
-    destroy: destroyAudio,
-    ensureInit: ensureAudioInit,
-  } = useAudioPlayback()
-
-  // Toggle agent: connect WS + start mic, or disconnect + stop mic
-  const toggleAgent = useCallback(async () => {
-    if (agentActive) {
+  // Toggle mic: orb only controls microphone capture
+  const toggleMic = useCallback(async () => {
+    if (micActive) {
       stopMic()
-      disconnect()
-      stopAudio()
-      setAgentActive(false)
-      setTranscript('')
+      setMicActive(false)
     } else {
-      ensureAudioInit()
-      await connect()
       await startMic()
-      setAgentActive(true)
+      setMicActive(true)
     }
-  }, [agentActive, connect, disconnect, startMic, stopMic, stopAudio, ensureAudioInit])
+  }, [micActive, startMic, stopMic])
 
   // Clean up audio on unmount
   useEffect(() => {
@@ -168,6 +181,8 @@ function AppPage() {
   // Keep refs for callbacks used inside SVAR init
   const openFileRef = useRef(openFile)
   openFileRef.current = openFile
+  const allFilesRef = useRef(allFiles)
+  allFilesRef.current = allFiles
 
   // Keep token ref in sync so init callbacks always have latest token
   useEffect(() => {
@@ -202,8 +217,10 @@ function AppPage() {
       // Intercept open-file BEFORE SVAR processes it — handle entirely ourselves.
       // Return false to stop SVAR's internal event pipeline.
       api.intercept('open-file', (ev: any) => {
-        console.log('[asisto] open-file (intercepted):', ev.id)
         if (ev.id) {
+          // Don't open folders as file viewers
+          const match = allFilesRef.current.find((f: any) => f.id === ev.id)
+          if (match?.type === 'folder') return false
           openFileRef.current(ev.id)
         }
         return false
@@ -211,31 +228,22 @@ function AppPage() {
 
       // Lazy loading: use realtime data (no server call needed)
       api.on('request-data', (ev: any) => {
-        console.log('[asisto] request-data:', ev.id)
         const children = getChildrenRef.current(ev.id)
-        console.log('[asisto] provide-data:', ev.id, children.length, 'items')
         api.exec('provide-data', { data: children, id: ev.id })
       })
 
       // Create file/folder
       api.on('create-file', async (ev: any) => {
         const token = idTokenRef.current
-        console.log('[asisto] create-file event:', JSON.stringify(ev, null, 2))
-        if (!token) {
-          console.error('[asisto] create-file: no token')
-          return
-        }
+        if (!token) return
         try {
           const name = ev.file?.name || 'untitled'
           const type = ev.file?.type || 'folder'
           const parentId = ev.parent || '/'
-          console.log('[asisto] creating:', { parentId, name, type })
-          const result = await createFile({
+          await createFile({
             data: { token, parentId, name, type },
           })
-          console.log('[asisto] created:', result)
         } catch (err) {
-          console.error('[asisto] create-file error:', err)
           setError(err instanceof Error ? err.message : 'Failed to create')
         }
       })
@@ -243,15 +251,12 @@ function AppPage() {
       // Rename
       api.on('rename-file', async (ev: any) => {
         const token = idTokenRef.current
-        console.log('[asisto] rename-file:', ev.id, '->', ev.name)
         if (!token) return
         try {
           await renameFile({
             data: { token, fileId: ev.id, name: ev.name },
           })
-          console.log('[asisto] renamed ok')
         } catch (err) {
-          console.error('[asisto] rename error:', err)
           setError(err instanceof Error ? err.message : 'Failed to rename')
         }
       })
@@ -259,13 +264,10 @@ function AppPage() {
       // Delete
       api.on('delete-files', async (ev: any) => {
         const token = idTokenRef.current
-        console.log('[asisto] delete-files:', ev.ids)
         if (!token) return
         try {
           await deleteFiles({ data: { token, ids: ev.ids } })
-          console.log('[asisto] deleted ok')
         } catch (err) {
-          console.error('[asisto] delete error:', err)
           setError(err instanceof Error ? err.message : 'Failed to delete')
         }
       })
@@ -403,7 +405,6 @@ function AppPage() {
               <FileViewer
                 fileId={fileId}
                 token={idToken}
-                onClose={() => closeWindow(fileId)}
               />
             </Window>
           )
@@ -412,21 +413,30 @@ function AppPage() {
       {/* Status bar */}
       <div className="shrink-0 flex items-center justify-between border-t border-[#30363d] px-4 py-1">
         <div className="flex items-center gap-3">
-          {/* Spacer for orb overlap */}
-          <div className="w-14" />
           <span className="text-xs text-[#484f58]">
             {allFiles.length} item{allFiles.length !== 1 ? 's' : ''}
           </span>
-          {wsStatus === 'connected' && transcript && (
-            <span className="max-w-md truncate text-xs text-[#8b949e]">
-              {transcript}
-            </span>
+          {wsStatus === 'connected' && (
+            <span className="text-xs text-[#3fb950]">●</span>
           )}
           {wsStatus === 'connecting' && (
             <span className="text-xs text-[#d29922]">connecting...</span>
           )}
           {wsStatus === 'error' && (
-            <span className="text-xs text-[#f85149]">connection error</span>
+            <span className="text-xs text-[#f85149]">disconnected</span>
+          )}
+          {agentStreaming && (
+            <span className="text-xs text-[#d2a8ff]">thinking...</span>
+          )}
+          {agentError && (
+            <span className="max-w-xs truncate text-xs text-[#f85149]">
+              {agentError}
+            </span>
+          )}
+          {!agentError && transcript && (
+            <span className="max-w-md truncate text-xs text-[#8b949e]">
+              {transcript}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -443,12 +453,12 @@ function AppPage() {
         </div>
       </div>
 
-      {/* Orb — bottom-left corner, always visible on top */}
-      <div className="fixed bottom-2 left-2 z-50">
+      {/* Orb — bottom-center, floating above status bar */}
+      <div className="fixed bottom-3 left-1/2 z-50 -translate-x-1/2">
         <Orb
-          active={agentActive}
-          onToggle={toggleAgent}
-          size={56}
+          active={micActive}
+          onToggle={toggleMic}
+          size={72}
         />
       </div>
     </div>

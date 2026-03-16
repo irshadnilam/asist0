@@ -44,22 +44,6 @@ export interface DriveInfo {
 
 // --- File management server functions ---
 
-/** List files. Without parentId: root-level items. With parentId: children. */
-export const listFiles = createServerFn({ method: 'GET' })
-  .inputValidator((input: { token: string; parentId?: string }) => input)
-  .handler(async ({ data: { token, parentId } }): Promise<FileItem[]> => {
-    const url = parentId
-      ? `${API_BASE}/files/${encodeURIComponent(parentId.replace(/^\//, ''))}`
-      : `${API_BASE}/files`
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) {
-      throw new Error(await parseError(res, 'Failed to list files'))
-    }
-    return res.json()
-  })
-
 /** Create a new file or folder. */
 export const createFile = createServerFn({ method: 'POST' })
   .inputValidator(
@@ -152,44 +136,6 @@ export const deleteFiles = createServerFn({ method: 'POST' })
     }
   })
 
-/** Upload a file. Content is sent as base64 since server functions use JSON transport. */
-export const uploadFile = createServerFn({ method: 'POST' })
-  .inputValidator(
-    (input: {
-      token: string
-      parentId: string
-      filename: string
-      contentBase64: string
-      contentType: string
-    }) => input,
-  )
-  .handler(
-    async ({
-      data: { token, parentId, filename, contentBase64, contentType },
-    }): Promise<FileItem> => {
-      // Decode base64 and send as multipart form data to the backend
-      const buffer = Buffer.from(contentBase64, 'base64')
-      const blob = new Blob([buffer], { type: contentType })
-      const formData = new FormData()
-      formData.append('file', blob, filename)
-
-      const stripped = parentId.replace(/^\//, '')
-      const url = stripped
-        ? `${API_BASE}/upload/${encodeURIComponent(stripped)}`
-        : `${API_BASE}/upload`
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      })
-      if (!res.ok) {
-        throw new Error(await parseError(res, 'Failed to upload file'))
-      }
-      return res.json()
-    },
-  )
-
 /** Get drive storage info. */
 export const getDriveInfo = createServerFn({ method: 'GET' })
   .inputValidator((token: string) => token)
@@ -261,9 +207,10 @@ export const readFileContent = createServerFn({ method: 'GET' })
         res.headers.get('content-type') || 'application/octet-stream'
       const buffer = Buffer.from(await res.arrayBuffer())
 
-      // For images and binary files, return base64
+      // For images, PDFs, and binary files, return base64
       if (
         contentType.startsWith('image/') ||
+        contentType === 'application/pdf' ||
         contentType === 'application/octet-stream'
       ) {
         return {
