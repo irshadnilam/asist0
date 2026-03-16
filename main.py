@@ -670,6 +670,19 @@ async def websocket_endpoint(
         logger.error(f"WebSocket error: {e}")
     finally:
         live_request_queue.close()
+
+        # Save session to long-term memory (Memory Bank) so the agent
+        # can recall this conversation in future sessions.
+        try:
+            completed_session = await session_service.get_session(
+                app_name=APP_NAME, user_id=user_id, session_id=session_id
+            )
+            if completed_session:
+                await memory_service.add_session_to_memory(completed_session)
+                logger.info(f"Session {session_id} saved to memory for user {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to save session to memory: {e}")
+
         # Ensure clean close so the client can detect disconnect and reconnect
         try:
             await websocket.close()

@@ -17,6 +17,7 @@ from google.adk.agents import Agent
 from google.adk.code_executors import AgentEngineSandboxCodeExecutor
 from google.adk.skills import models as skill_models
 from google.adk.tools.skill_toolset import SkillToolset
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,22 @@ Follow its instructions exactly. Read any referenced files it mentions.
   different approach or ask the user.
 - If you get a permission or auth error, tell the user — you can't fix those.
 
+## Memory — Cross-Session Knowledge
+
+You have long-term memory powered by Vertex AI Memory Bank. At the start of each
+turn, relevant memories from past conversations are automatically loaded.
+
+This means you can:
+- Remember user preferences, project details, and past decisions
+- Build on work done in previous sessions
+- Recall information the user shared days or weeks ago
+
+Use this context naturally — don't announce "I checked my memory". Just act on
+what you know. If a memory seems relevant, weave it into your response.
+
+Your memory is automatically saved when a session ends, so important interactions
+are preserved for future sessions.
+
 ## Image Generation & Editing
 
 You can generate and edit images using the `generate_image` and `edit_image` tools.
@@ -234,6 +251,10 @@ def create_agent(
     """
     tools: list = []
     code_executor = None
+
+    # PreloadMemoryTool retrieves relevant memories from past sessions
+    # at the start of each turn, giving the agent long-term context.
+    tools.append(PreloadMemoryTool())
 
     # Create sandbox code executor if Agent Engine resource name is available.
     if agent_engine_resource_name:

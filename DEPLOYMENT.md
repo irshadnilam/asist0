@@ -109,7 +109,7 @@ make deploy-rules
 ```
 
 This deploys both `firestore.rules` and `storage.rules`:
-- Firestore: `users/{userId}/files/{fileId}` -- only `auth.uid == userId`
+- Firestore: `users/{userId}/files/{fileId}` and `users/{userId}/workspace/{docId}` -- only `auth.uid == userId`
 - Storage: `users/{userId}/{allPaths=**}` -- only `auth.uid == userId`
 
 ## Step 3: Create config.yaml
@@ -249,16 +249,28 @@ All REST endpoints require `Authorization: Bearer <firebase-id-token>`.
 | `GET` | `/download/{id}` | Stream file content |
 | `GET` | `/info` | Drive info + auto-seed for new users |
 
+### Workspace
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/workspace` | Get saved workspace layout (window positions, file manager path) |
+| `PUT` | `/workspace` | Save workspace layout |
+
 ### WebSocket
 
 **Connect:** `wss://BACKEND_URL/ws/default?token=FIREBASE_ID_TOKEN`
 
 | Direction | Format | Description |
 |-----------|--------|-------------|
-| Client → Server | JSON `{"type": "text", "text": "..."}` | Text message |
-| Client → Server | Binary (PCM 16kHz 16-bit) | Audio |
-| Server → Client | JSON with `content`, `turnComplete`, `interrupted` | Agent response |
-| Server → Client | JSON with `inputTranscription` / `outputTranscription` | Transcriptions |
+| Client -> Server | JSON `{"type": "text", "text": "..."}` | Text message |
+| Client -> Server | JSON `{"type": "image", "data": "base64...", "mimeType": "..."}` | Image data |
+| Client -> Server | Binary (PCM 16kHz 16-bit) | Audio |
+| Server -> Client | JSON with `content`, `turnComplete`, `interrupted` | Agent response |
+| Server -> Client | JSON with `inputTranscription` / `outputTranscription` | Transcriptions |
+| Server -> Client | JSON with `errorCode` / `errorMessage` | Agent errors |
+| Server -> Client | JSON with `partial` | Streaming indicator |
+
+On disconnect, the backend automatically saves the session to Vertex AI Memory Bank for long-term recall.
 
 ## Configuration Reference
 
@@ -274,6 +286,8 @@ All REST endpoints require `Authorization: Bearer <firebase-id-token>`.
 
 ### Agent changes (`asisto_agent/`)
 
+Agent changes include the instruction prompt, tools (PreloadMemoryTool, SkillToolset, file tools), and model configuration.
+
 ```bash
 make deploy-agent       # Creates new Agent Engine resource
 # Update config.yaml with new resource_id
@@ -281,6 +295,8 @@ make deploy-infra       # Redeploy Cloud Run
 ```
 
 ### Backend changes (`main.py`, `storage_ops.py`, `agent_tools.py`, `skill_loader.py`)
+
+Backend changes include the file REST API, WebSocket handler, workspace persistence, memory saving, and storage operations.
 
 ```bash
 make deploy-infra       # Rebuilds Docker image + redeploys
