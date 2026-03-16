@@ -2,6 +2,8 @@
 
 Asist0 is a voice-first AI workspace built on the [Google Agent Development Kit (ADK)](https://google.github.io/adk-docs/). This document covers the complete system design — every Google service integration, every ADK feature used, and every data flow.
 
+![Architecture Diagram](diagram.png)
+
 ## System Overview
 
 ```
