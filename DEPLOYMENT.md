@@ -1,4 +1,4 @@
-# Asisto Deployment Guide
+# Asist0 - Agentic Workspace: Deployment Guide
 
 This guide covers deploying Asisto to Google Cloud:
 - Agent deployment to **Vertex AI Agent Engine**
@@ -143,7 +143,7 @@ firebase:
 
 agent:
   model: "gemini-live-2.5-flash-native-audio"
-  display_name: "Asisto Agent"
+  display_name: "Asist0 Agent"
 ```
 
 **Important:** `config.yaml` is in `.gitignore`. Never commit it.
@@ -319,15 +319,15 @@ make deploy-rules
 ### 1. Verify domain ownership
 
 ```bash
-gcloud domains verify agents.sh
+gcloud domains verify asist0.com
 ```
 
 ### 2. Configure in config.yaml
 
 ```yaml
 domains:
-  frontend: "asisto.agents.sh"
-  api: "asisto-api.agents.sh"
+  frontend: "asist0.com"
+  api: "api.asist0.com"
 ```
 
 ### 3. Deploy
@@ -340,12 +340,12 @@ make deploy-infra
 
 | Name | Type | Value |
 |------|------|-------|
-| `asisto.agents.sh` | CNAME | `ghs.googlehosted.com` |
-| `asisto-api.agents.sh` | CNAME | `ghs.googlehosted.com` |
+| `asist0.com` | CNAME | `ghs.googlehosted.com` |
+| `api.asist0.com` | CNAME | `ghs.googlehosted.com` |
 
 ### 5. Add domain to Firebase Auth
 
-Firebase Console → Authentication → Settings → Authorized domains → Add `asisto.agents.sh`
+Firebase Console → Authentication → Settings → Authorized domains → Add `asist0.com`
 
 SSL certificate provisions automatically (15-30 minutes after DNS propagates).
 

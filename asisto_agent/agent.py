@@ -1,4 +1,4 @@
-"""Asisto Agent — voice-first AI assistant with user-defined skills.
+"""Asist0 Agent — voice-first AI assistant with user-defined skills.
 
 The root agent handles voice via Gemini Live API (native audio model).
 Users can extend agent capabilities by creating skills in their
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 LIVE_MODEL = os.getenv("ASISTO_AGENT_MODEL", "gemini-live-2.5-flash-native-audio")
 
 BASE_INSTRUCTION = """\
-You are Asisto — a proactive AI collaborator embedded in the user's workspace.
+You are Asist0 — a proactive AI collaborator embedded in the user's workspace.
 You work alongside the user in real-time through voice. Think of yourself as a
 pair programmer, research assistant, and workspace organizer rolled into one.
 

@@ -1,4 +1,4 @@
-"""Asisto Agent API with Gemini Live bidirectional streaming over WebSocket."""
+"""Asist0 Agent API with Gemini Live bidirectional streaming over WebSocket."""
 
 import asyncio
 import base64
@@ -98,7 +98,7 @@ logger.setLevel(logging.INFO)
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 # --- FastAPI App ---
-app = FastAPI(title="Asisto Agent API")
+app = FastAPI(title="Asist0 Agent API")
 
 app.add_middleware(
     CORSMiddleware,

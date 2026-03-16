@@ -1,4 +1,4 @@
-"""Asisto infrastructure - Pulumi program for Google Cloud.
+"""Asist0 infrastructure - Pulumi program for Google Cloud.
 
 Provisions:
 1. Required GCP APIs
@@ -120,7 +120,7 @@ backend_image = docker.Image(
 service_account = gcp.serviceaccount.Account(
     "asisto-sa",
     account_id="asisto-api-sa",
-    display_name="Asisto API Service Account",
+    display_name="Asist0 API Service Account",
     project=project,
 )
 

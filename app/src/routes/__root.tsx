@@ -17,9 +17,14 @@ export const Route = createRootRoute({
         name: 'viewport',
         content: 'width=device-width, initial-scale=1',
       },
-      { title: 'asisto' },
+      { title: 'Asist0 - Agentic Workspace' },
     ],
     links: [
+      { rel: 'icon', href: '/favicon.ico', sizes: '48x48' },
+      { rel: 'icon', href: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+      { rel: 'icon', href: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      { rel: 'apple-touch-icon', href: '/apple-touch-icon.png', sizes: '180x180' },
+      { rel: 'manifest', href: '/manifest.json' },
       { rel: 'stylesheet', href: appCss },
       {
         rel: 'stylesheet',

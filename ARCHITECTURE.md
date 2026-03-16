@@ -1,6 +1,6 @@
-# Architecture
+# Asist0 - Agentic Workspace: Architecture
 
-Asisto is a voice-first AI assistant built on the [Google Agent Development Kit (ADK)](https://google.github.io/adk-docs/). This document details the system design, covering the agent architecture, memory system, file management, skills system, frontend windowing, and deployment infrastructure.
+Asist0 is a voice-first AI assistant built on the [Google Agent Development Kit (ADK)](https://google.github.io/adk-docs/). This document details the system design, covering the agent architecture, memory system, file management, skills system, frontend windowing, and deployment infrastructure.
 
 ## System Overview
 
@@ -334,8 +334,8 @@ The `infra/__main__.py` provisions:
 
 ### Custom Domains
 
-- `asisto.agents.sh` -- frontend
-- `asisto-api.agents.sh` -- backend
+- `asist0.com` -- frontend
+- `api.asist0.com` -- backend
 
 Both configured via `gcp.cloudrun.DomainMapping` in Pulumi.
 

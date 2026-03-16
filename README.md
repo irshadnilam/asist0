@@ -1,4 +1,4 @@
-# Asisto
+# Asist0 - Agentic Workspace
 
 A voice-first AI assistant built with [Google ADK](https://google.github.io/adk-docs/) (Agent Development Kit) and the Gemini Live API. Features real-time bidirectional voice streaming, long-term memory across sessions, a file manager with floating editor windows, user-extensible agent skills, image generation/editing, and Firebase-backed storage -- all deployed to Google Cloud.
 
@@ -76,7 +76,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
 | Storage | Firebase Storage (blobs) + Firestore (metadata, realtime) |
 | Sessions | Vertex AI Agent Engine (Session Service + Memory Bank) |
 | Infrastructure | Pulumi (Python, local state), Docker, Cloud Run |
-| Domains | `asisto.agents.sh`, `asisto-api.agents.sh` |
+| Domains | `asist0.com`, `api.asist0.com` |
 
 ## Project Structure
 
@@ -208,6 +208,21 @@ make status          Check deployment status
 ## Deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the full guide.
+
+## Acknowledgements
+
+Asist0's UI is built on these open-source libraries:
+
+| Library | Purpose | License |
+|---------|---------|---------|
+| [SVAR React Filemanager](https://github.com/svar-widgets/react-filemanager) | File manager with tree view, drag-and-drop, context menus | MIT |
+| [WinBox.js](https://github.com/nextapps-de/winbox) | Floating window manager (drag, resize, minimize, maximize) | Apache-2.0 |
+| [CodeMirror 6](https://github.com/codemirror/view) | Code editor with syntax highlighting | MIT |
+| [react-pdf](https://github.com/wojtekmaj/react-pdf) | PDF viewer with page navigation | MIT |
+| [OGL](https://github.com/oframe/ogl) | WebGL library for the voice orb | [Unlicense](https://unlicense.org/) |
+| [pcm-player](https://github.com/pkjy/pcm-player) | PCM audio playback (24kHz from Gemini) | MIT |
+| [react-markdown](https://github.com/remarkjs/react-markdown) | Markdown rendering for live preview | MIT |
+| [remark-gfm](https://github.com/remarkjs/remark-gfm) | GitHub Flavored Markdown support | MIT |
 
 ## License
 

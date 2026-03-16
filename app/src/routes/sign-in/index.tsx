@@ -47,8 +47,8 @@ function SignIn() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6">
       <div className="flex flex-col items-center gap-2">
-        <span className="text-2xl font-bold text-[#c9d1d9]">asisto</span>
-        <span className="text-sm text-[#484f58]">AI voice + text assistant</span>
+        <span className="text-2xl font-bold text-[#c9d1d9]">asist0</span>
+        <span className="text-sm text-[#484f58]">agentic workspace</span>
       </div>
 
       {error && (

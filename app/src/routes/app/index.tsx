@@ -9,6 +9,7 @@ import {
   getDriveInfo,
   moveFiles,
   renameFile,
+  uploadFile,
   type DriveInfo,
 } from '../../lib/api'
 import { useAuth } from '../../lib/useAuth'
@@ -313,19 +314,50 @@ function AppPage() {
         api.exec('provide-data', { data: children, id: ev.id })
       })
 
-      // Create file/folder
+      // Create file/folder OR upload file
+      // SVAR uses the same 'create-file' event for both:
+      // - Empty file/folder creation: ev.file has { name, type } only
+      // - File upload (drag-drop / upload button): ev.file has { name, file: File }
       api.on('create-file', async (ev: any) => {
         const token = idTokenRef.current
         if (!token) return
-        try {
-          const name = ev.file?.name || 'untitled'
-          const type = ev.file?.type || 'folder'
-          const parentId = ev.parent || '/'
-          await createFile({
-            data: { token, parentId, name, type },
-          })
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Failed to create')
+
+        const browserFile: globalThis.File | undefined = ev.file?.file
+        if (browserFile) {
+          // --- Upload path: convert File to base64 and send via uploadFile ---
+          try {
+            const arrayBuffer = await browserFile.arrayBuffer()
+            const base64 = btoa(
+              new Uint8Array(arrayBuffer).reduce(
+                (data, byte) => data + String.fromCharCode(byte),
+                '',
+              ),
+            )
+            const parentId = ev.parent || '/'
+            await uploadFile({
+              data: {
+                token,
+                parentId,
+                filename: browserFile.name,
+                base64,
+                contentType: browserFile.type || 'application/octet-stream',
+              },
+            })
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to upload')
+          }
+        } else {
+          // --- Create path: empty file or folder ---
+          try {
+            const name = ev.file?.name || 'untitled'
+            const type = ev.file?.type || 'folder'
+            const parentId = ev.parent || '/'
+            await createFile({
+              data: { token, parentId, name, type },
+            })
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to create')
+          }
         }
       })
 
@@ -416,7 +448,7 @@ function AppPage() {
       {/* Title bar */}
       <div className="shrink-0 flex items-center justify-between border-b border-[#30363d] px-4 py-2">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-[#58a6ff]">asisto</span>
+          <span className="text-sm font-semibold text-[#58a6ff]">asist0</span>
           <span className="text-xs text-[#484f58]">/</span>
           <span className="text-sm text-[#8b949e]">files</span>
           {openWindows.length > 0 && (

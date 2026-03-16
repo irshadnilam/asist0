@@ -1,4 +1,4 @@
-# Asisto Deployment Configuration
+# Asist0 Deployment Configuration
 # Copy this to config.yaml and fill in your values.
 # DO NOT commit config.yaml to git -- it's in .gitignore.
 
@@ -27,8 +27,8 @@ frontend:
 # Requires domain verification: https://www.google.com/webmasters/verification/
 # After deploying, create CNAME records pointing to ghs.googlehosted.com.
 domains:
-  frontend: ""  # e.g., "asisto.agents.sh"
-  api: ""       # e.g., "asisto-api.agents.sh"
+  frontend: ""  # e.g., "asist0.com"
+  api: ""       # e.g., "api.asist0.com"
 
 agent:
   model: "gemini-live-2.5-flash-native-audio"

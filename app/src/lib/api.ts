@@ -69,6 +69,43 @@ export const createFile = createServerFn({ method: 'POST' })
     return res.json()
   })
 
+/** Upload a file (binary content). Content is sent as base64 from the browser. */
+export const uploadFile = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (input: {
+      token: string
+      parentId: string
+      filename: string
+      base64: string
+      contentType: string
+    }) => input,
+  )
+  .handler(
+    async ({
+      data: { token, parentId, filename, base64, contentType },
+    }): Promise<FileItem> => {
+      const buffer = Buffer.from(base64, 'base64')
+      const blob = new Blob([buffer], { type: contentType })
+      const formData = new FormData()
+      formData.append('file', blob, filename)
+
+      const stripped = parentId.replace(/^\//, '')
+      const url = stripped
+        ? `${API_BASE}/upload/${encodeURIComponent(stripped)}`
+        : `${API_BASE}/upload`
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      })
+      if (!res.ok) {
+        throw new Error(await parseError(res, 'Failed to upload file'))
+      }
+      return res.json()
+    },
+  )
+
 /** Rename a file or folder. */
 export const renameFile = createServerFn({ method: 'POST' })
   .inputValidator(
