@@ -100,6 +100,9 @@ deploy-all: deploy-agent ## Deploy everything (agent + infrastructure)
 
 # --- Utilities ---
 
+deploy-rules: ## Deploy Firebase security rules (Firestore + Storage)
+	firebase deploy --only firestore:rules,storage --project=$(PROJECT_ID)
+
 logs: ## View backend Cloud Run logs
 	gcloud run services logs read $(SERVICE_NAME) \
 		--project=$(PROJECT_ID) --region=$(REGION) --limit=50

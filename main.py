@@ -5,8 +5,10 @@ import base64
 import json
 import logging
 import os
+import posixpath
 import warnings
 from pathlib import Path
+from urllib.parse import unquote
 
 import yaml
 import firebase_admin
@@ -14,12 +16,16 @@ from firebase_admin import auth as firebase_auth
 from fastapi import (
     Depends,
     FastAPI,
+    File,
     HTTPException,
+    Query,
     Request,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from google.adk.agents.live_request_queue import LiveRequestQueue
@@ -29,7 +35,10 @@ from google.adk.sessions import VertexAiSessionService
 from google.adk.memory import VertexAiMemoryBankService
 from google.genai import types
 
-from asisto_agent.agent import root_agent
+from asisto_agent.agent import root_agent, create_agent
+import agent_tools
+import storage_ops
+import skill_loader
 
 
 # --- Load Configuration ---
@@ -45,11 +54,13 @@ def _load_config() -> dict:
     # Allow env var overrides
     gcp = config.get("gcp", {})
     engine = config.get("agent_engine", {})
+    fb = config.get("firebase", {})
 
     return {
         "project_id": os.getenv("GOOGLE_CLOUD_PROJECT", gcp.get("project_id", "")),
         "region": os.getenv("GOOGLE_CLOUD_LOCATION", gcp.get("region", "us-central1")),
         "engine_id": os.getenv("AGENT_ENGINE_ID", engine.get("resource_id", "")),
+        "storage_bucket": os.getenv("STORAGE_BUCKET", fb.get("storage_bucket", "")),
     }
 
 
@@ -57,6 +68,7 @@ cfg = _load_config()
 PROJECT_ID = cfg["project_id"]
 LOCATION = cfg["region"]
 ENGINE_ID = cfg["engine_id"]
+STORAGE_BUCKET = cfg["storage_bucket"] or None  # None = use default bucket
 
 if not ENGINE_ID:
     raise RuntimeError(
@@ -135,60 +147,274 @@ runner = Runner(
 )
 
 
-# --- Request/Response Models ---
-class CreateWorkspaceResponse(BaseModel):
-    workspace_id: str
+# --- REST Endpoints (File Management — SVAR RestDataProvider compatible) ---
 
 
-class WorkspaceInfo(BaseModel):
-    workspace_id: str
+@app.get("/files")
+async def get_files(
+    id: str = Query(None, description="Parent folder id to list children of"),
+    user_id: str = Depends(get_current_user),
+):
+    """List files. Without id param: root-level items. With id: children of that folder.
+
+    On first request for a new user (no files), seeds default skills.
+    """
+    logger.info(f"GET /files: user={user_id}, id={id}")
+    try:
+        files = await asyncio.to_thread(
+            storage_ops.list_files, user_id, id, STORAGE_BUCKET
+        )
+        # Seed defaults for new users (root listing, no files)
+        if not files and (id is None or id in ("", "/")):
+            logger.info(f"New user {user_id}, seeding default files")
+            await asyncio.to_thread(
+                storage_ops.seed_default_files, user_id, STORAGE_BUCKET
+            )
+            files = await asyncio.to_thread(
+                storage_ops.list_files, user_id, id, STORAGE_BUCKET
+            )
+        return files
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# --- REST Endpoints (Workspace Management) ---
+@app.get("/files/{file_id:path}")
+async def get_files_by_id(
+    file_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """List children of a specific folder (lazy loading)."""
+    decoded_id = f"/{unquote(file_id)}"
+    try:
+        files = await asyncio.to_thread(
+            storage_ops.list_files, user_id, decoded_id, STORAGE_BUCKET
+        )
+        return files
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/workspaces", response_model=CreateWorkspaceResponse)
-async def create_workspace(user_id: str = Depends(get_current_user)):
-    """Create a new workspace (conversation session) for the authenticated user."""
-    session = await session_service.create_session(
-        app_name=APP_NAME,
-        user_id=user_id,
-    )
-    return CreateWorkspaceResponse(workspace_id=session.id)
+@app.post("/files")
+async def create_file_root(
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Create a new file or folder at root level.
+
+    Body: { "name": "new-name", "type": "folder" | "file" }
+    """
+    body = await request.json()
+    name = body.get("name", "untitled")
+    file_type = body.get("type", "folder")
+    new_id = f"/{name}"
+    logger.info(f"POST /files: user={user_id}, name={name}, type={file_type}")
+
+    try:
+        result = await asyncio.to_thread(
+            storage_ops.create_file, user_id, new_id, file_type, STORAGE_BUCKET
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/workspaces", response_model=list[WorkspaceInfo])
-async def list_workspaces(user_id: str = Depends(get_current_user)):
-    """List all workspaces for the authenticated user."""
-    result = await session_service.list_sessions(
-        app_name=APP_NAME,
-        user_id=user_id,
-    )
-    return [WorkspaceInfo(workspace_id=s.id) for s in result.sessions]
+@app.post("/files/{file_id:path}")
+async def create_file(
+    file_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Create a new file or folder.
+
+    Body: { "name": "new-name", "type": "folder" | "file" }
+    file_id in path is the parent folder id.
+    """
+    body = await request.json()
+    name = body.get("name", "untitled")
+    file_type = body.get("type", "folder")
+    parent_id = f"/{unquote(file_id)}" if file_id else "/"
+
+    new_id = posixpath.join(parent_id, name) if parent_id != "/" else f"/{name}"
+
+    try:
+        result = await asyncio.to_thread(
+            storage_ops.create_file, user_id, new_id, file_type, STORAGE_BUCKET
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/workspaces/{workspace_id}", response_model=WorkspaceInfo)
-async def get_workspace(workspace_id: str, user_id: str = Depends(get_current_user)):
-    """Get a specific workspace."""
-    session = await session_service.get_session(
-        app_name=APP_NAME,
-        user_id=user_id,
-        session_id=workspace_id,
-    )
-    if not session:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    return WorkspaceInfo(workspace_id=session.id)
+@app.put("/files/{file_id:path}")
+async def rename_file(
+    file_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Rename a file or folder.
+
+    Body: { "name": "new-name" }
+    """
+    body = await request.json()
+    new_name = body.get("name")
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Missing 'name' in body")
+
+    decoded_id = f"/{unquote(file_id)}"
+
+    try:
+        result = await asyncio.to_thread(
+            storage_ops.rename_file, user_id, decoded_id, new_name, STORAGE_BUCKET
+        )
+        return result
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/workspaces/{workspace_id}")
-async def delete_workspace(workspace_id: str, user_id: str = Depends(get_current_user)):
-    """Delete a workspace."""
-    await session_service.delete_session(
-        app_name=APP_NAME,
-        user_id=user_id,
-        session_id=workspace_id,
-    )
-    return {"status": "deleted"}
+@app.put("/files")
+async def move_files(
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Move or copy files.
+
+    Body: { "ids": ["/path1", "/path2"], "target": "/dest-folder", "copy": false }
+    """
+    body = await request.json()
+    ids = body.get("ids", [])
+    target = body.get("target", "/")
+    copy = body.get("copy", False)
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="Missing 'ids' in body")
+
+    try:
+        results = await asyncio.to_thread(
+            storage_ops.move_files, user_id, ids, target, copy, STORAGE_BUCKET
+        )
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/files")
+async def delete_files(
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Delete files/folders.
+
+    Body: { "ids": ["/path1", "/path2"] }
+    """
+    body = await request.json()
+    ids = body.get("ids", [])
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="Missing 'ids' in body")
+
+    try:
+        await asyncio.to_thread(storage_ops.delete_files, user_id, ids, STORAGE_BUCKET)
+        return {"status": "deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/upload")
+async def upload_file_root(
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+):
+    """Upload a file to root level."""
+    content = await file.read()
+    filename = file.filename or "unnamed"
+
+    try:
+        result = await asyncio.to_thread(
+            storage_ops.upload_file,
+            user_id,
+            "/",
+            filename,
+            content,
+            file.content_type or "application/octet-stream",
+            STORAGE_BUCKET,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/upload/{file_id:path}")
+async def upload_file(
+    file_id: str,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+):
+    """Upload a file to a folder.
+
+    file_id in path is the parent folder id.
+    File is sent as multipart form data.
+    """
+    parent_id = f"/{unquote(file_id)}" if file_id else "/"
+    content = await file.read()
+    filename = file.filename or "unnamed"
+
+    try:
+        result = await asyncio.to_thread(
+            storage_ops.upload_file,
+            user_id,
+            parent_id,
+            filename,
+            content,
+            file.content_type or "application/octet-stream",
+            STORAGE_BUCKET,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/info")
+async def get_info(user_id: str = Depends(get_current_user)):
+    """Get drive storage info. Seeds defaults for new users."""
+    try:
+        info = await asyncio.to_thread(storage_ops.get_drive_info, user_id)
+        # Seed defaults for new users (no files at all)
+        if info.get("used", 0) == 0:
+            seeded = await asyncio.to_thread(
+                storage_ops.seed_default_files, user_id, STORAGE_BUCKET
+            )
+            if seeded:
+                info = await asyncio.to_thread(storage_ops.get_drive_info, user_id)
+        return {"stats": info}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/download/{file_id:path}")
+async def download_file(
+    file_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """Download a file. Returns the file content directly."""
+    decoded_id = f"/{unquote(file_id)}"
+    name = posixpath.basename(decoded_id)
+    try:
+        content, content_type = await asyncio.to_thread(
+            storage_ops.download_file_content, user_id, decoded_id, STORAGE_BUCKET
+        )
+        return Response(
+            content=content,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{name}"',
+            },
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # --- Event Filtering ---
@@ -216,6 +442,9 @@ async def websocket_endpoint(
     Authentication: Pass Firebase ID token as `token` query parameter.
     Example: ws://host/ws/{workspace_id}?token=FIREBASE_ID_TOKEN
 
+    On connect, loads the user's skills from /skills/ in Firebase Storage
+    and creates a per-session agent with those skills via SkillToolset.
+
     Supports:
     - Text messages: JSON {"type": "text", "text": "..."}
     - Image data: JSON {"type": "image", "data": "base64...", "mimeType": "image/jpeg"}
@@ -223,10 +452,6 @@ async def websocket_endpoint(
 
     Sends back: Filtered JSON-encoded ADK Event objects (text, audio,
     transcriptions, turn_complete, interrupted only).
-
-    Args:
-        websocket: The WebSocket connection
-        workspace_id: Workspace identifier (create via POST /workspaces first)
     """
     # Authenticate via query param
     token = websocket.query_params.get("token")
@@ -243,8 +468,42 @@ async def websocket_endpoint(
     logger.info(f"WebSocket connected: user_id={user_id}, workspace_id={workspace_id}")
     await websocket.accept()
 
+    # --- Load user skills from Firebase Storage ---
+    try:
+        user_skills = await asyncio.to_thread(
+            skill_loader.load_user_skills, user_id, STORAGE_BUCKET
+        )
+        if user_skills:
+            logger.info(
+                f"Loaded {len(user_skills)} skills for user {user_id}: "
+                + ", ".join(s.frontmatter.name for s in user_skills)
+            )
+    except Exception as e:
+        logger.warning(f"Failed to load user skills: {e}")
+        user_skills = []
+
+    # --- Create file-operation tools for this user ---
+    file_tools = agent_tools.create_file_tools(
+        user_id=user_id, bucket_name=STORAGE_BUCKET
+    )
+
+    # --- Create per-session agent with user's skills + file tools ---
+    session_agent = create_agent(
+        user_skills=user_skills or None,
+        agent_engine_resource_name=APP_NAME,
+        file_tools=file_tools,
+    )
+
+    # Create a per-session runner
+    session_runner = Runner(
+        agent=session_agent,
+        app_name=APP_NAME,
+        session_service=session_service,
+        memory_service=memory_service,
+    )
+
     # --- Determine response modality based on model ---
-    model_name = str(root_agent.model)
+    model_name = str(session_agent.model)
     is_native_audio = "native-audio" in model_name.lower()
 
     if is_native_audio:
@@ -304,13 +563,8 @@ async def websocket_endpoint(
                     live_request_queue.send_realtime(image_blob)
 
     async def downstream_task() -> None:
-        """Receives Events from run_live(), filters, and sends to WebSocket.
-
-        Only forwards user-facing data: audio, text, transcriptions,
-        turnComplete, interrupted. Strips out function calls, function
-        responses, and agent-delegation internals.
-        """
-        async for event in runner.run_live(
+        """Receives Events from run_live(), filters, and sends to WebSocket."""
+        async for event in session_runner.run_live(
             user_id=user_id,
             session_id=workspace_id,
             live_request_queue=live_request_queue,
@@ -323,10 +577,8 @@ async def websocket_endpoint(
             # --- Filter content.parts: drop functionCall / functionResponse ---
             if "content" in event_payload:
                 parts = event_payload["content"].get("parts", [])
-                # Keep only parts that have text or inlineData (audio)
                 clean_parts = [p for p in parts if "text" in p or "inlineData" in p]
                 if not clean_parts:
-                    # All parts were tool internals — skip the content key
                     del event_payload["content"]
                 else:
                     event_payload["content"]["parts"] = clean_parts

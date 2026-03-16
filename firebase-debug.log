@@ -1,0 +1,60 @@
+[debug] [2026-03-16T08:50:19.994Z] ----------------------------------------------------------------------
+[debug] [2026-03-16T08:50:19.996Z] Command:       /Users/irshadnilam/.nvm/versions/node/v24.13.1/bin/node /Users/irshadnilam/.nvm/versions/node/v24.13.1/bin/firebase deploy --only storage --project asista-hackathon --debug
+[debug] [2026-03-16T08:50:19.996Z] CLI Version:   15.8.0
+[debug] [2026-03-16T08:50:19.996Z] Platform:      darwin
+[debug] [2026-03-16T08:50:19.996Z] Node Version:  v24.13.1
+[debug] [2026-03-16T08:50:19.996Z] Time:          Mon Mar 16 2026 15:50:19 GMT+0700 (Indochina Time)
+[debug] [2026-03-16T08:50:19.997Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-03-16T08:50:20.780Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-03-16T08:50:20.780Z] > authorizing via signed-in user (irsd61@gmail.com)
+[debug] [2026-03-16T08:50:20.780Z] [iam] checking project asista-hackathon for permissions ["firebase.projects.get","firebaserules.releases.create","firebaserules.releases.update","firebaserules.rulesets.create"]
+[debug] [2026-03-16T08:50:20.781Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:20.781Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:20.781Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/asista-hackathon:testIamPermissions [none]
+[debug] [2026-03-16T08:50:20.781Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/asista-hackathon:testIamPermissions  x-goog-user-project=asista-hackathon
+[debug] [2026-03-16T08:50:20.781Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/asista-hackathon:testIamPermissions {"permissions":["firebase.projects.get","firebaserules.releases.create","firebaserules.releases.update","firebaserules.rulesets.create"]}
+[debug] [2026-03-16T08:50:21.924Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/asista-hackathon:testIamPermissions 200
+[debug] [2026-03-16T08:50:21.925Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/asista-hackathon:testIamPermissions {"permissions":["firebase.projects.get","firebaserules.releases.create","firebaserules.releases.update","firebaserules.rulesets.create"]}
+[info] 
+[info] === Deploying to 'asista-hackathon'...
+[info] 
+[info] i  deploying storage 
+[info] i  storage: ensuring required API firebasestorage.googleapis.com is enabled... 
+[debug] [2026-03-16T08:50:21.929Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:21.929Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:21.930Z] >>> [apiv2][query] GET https://firebasestorage.googleapis.com/v1alpha/projects/asista-hackathon/defaultBucket [none]
+[debug] [2026-03-16T08:50:22.640Z] <<< [apiv2][status] GET https://firebasestorage.googleapis.com/v1alpha/projects/asista-hackathon/defaultBucket 200
+[debug] [2026-03-16T08:50:22.640Z] <<< [apiv2][body] GET https://firebasestorage.googleapis.com/v1alpha/projects/asista-hackathon/defaultBucket {"name":"projects/asista-hackathon/defaultBucket","location":"US-CENTRAL1","bucket":{"name":"projects/asista-hackathon/buckets/asista-hackathon.firebasestorage.app"},"storageClass":"STANDARD"}
+[info] i  firebase.storage: checking storage.rules for compilation errors... 
+[debug] [2026-03-16T08:50:22.642Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:22.642Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:22.642Z] >>> [apiv2][query] POST https://firebaserules.googleapis.com/v1/projects/asista-hackathon:test [none]
+[debug] [2026-03-16T08:50:22.642Z] >>> [apiv2][body] POST https://firebaserules.googleapis.com/v1/projects/asista-hackathon:test [omitted]
+[debug] [2026-03-16T08:50:24.175Z] <<< [apiv2][status] POST https://firebaserules.googleapis.com/v1/projects/asista-hackathon:test 200
+[debug] [2026-03-16T08:50:24.176Z] <<< [apiv2][body] POST https://firebaserules.googleapis.com/v1/projects/asista-hackathon:test {}
+[info] ✔  firebase.storage: rules file storage.rules compiled successfully 
+[debug] [2026-03-16T08:50:24.178Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:24.178Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:24.178Z] >>> [apiv2][query] GET https://firebaserules.googleapis.com/v1/projects/asista-hackathon/releases pageSize=10&pageToken=
+[debug] [2026-03-16T08:50:25.472Z] <<< [apiv2][status] GET https://firebaserules.googleapis.com/v1/projects/asista-hackathon/releases 200
+[debug] [2026-03-16T08:50:25.473Z] <<< [apiv2][body] GET https://firebaserules.googleapis.com/v1/projects/asista-hackathon/releases {"releases":[{"name":"projects/asista-hackathon/releases/cloud.firestore","rulesetName":"projects/asista-hackathon/rulesets/c9ff71a7-f310-477b-a5cb-fb2f7f1dfe7d","createTime":"2026-03-16T08:47:03.146354Z","updateTime":"2026-03-16T08:47:03.146354Z"},{"name":"projects/asista-hackathon/releases/firebase.storage/asista-hackathon.firebasestorage.app","rulesetName":"projects/asista-hackathon/rulesets/8ebf0332-addd-4570-8dbf-0a335bde73b7","createTime":"2026-03-16T08:47:45.847669Z","updateTime":"2026-03-16T08:47:52.995584Z"}]}
+[debug] [2026-03-16T08:50:25.505Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:25.506Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:25.506Z] >>> [apiv2][query] GET https://firebaserules.googleapis.com/v1/projects/asista-hackathon/rulesets/8ebf0332-addd-4570-8dbf-0a335bde73b7 [none]
+[debug] [2026-03-16T08:50:25.776Z] <<< [apiv2][status] GET https://firebaserules.googleapis.com/v1/projects/asista-hackathon/rulesets/8ebf0332-addd-4570-8dbf-0a335bde73b7 200
+[debug] [2026-03-16T08:50:25.777Z] <<< [apiv2][body] GET https://firebaserules.googleapis.com/v1/projects/asista-hackathon/rulesets/8ebf0332-addd-4570-8dbf-0a335bde73b7 [omitted]
+[info] i  storage: uploading rules storage.rules... 
+[debug] [2026-03-16T08:50:25.778Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:25.778Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:25.778Z] >>> [apiv2][query] POST https://firebaserules.googleapis.com/v1/projects/asista-hackathon/rulesets [none]
+[debug] [2026-03-16T08:50:25.778Z] >>> [apiv2][body] POST https://firebaserules.googleapis.com/v1/projects/asista-hackathon/rulesets [omitted]
+[debug] [2026-03-16T08:50:27.074Z] <<< [apiv2][status] POST https://firebaserules.googleapis.com/v1/projects/asista-hackathon/rulesets 200
+[debug] [2026-03-16T08:50:27.075Z] <<< [apiv2][body] POST https://firebaserules.googleapis.com/v1/projects/asista-hackathon/rulesets {"name":"projects/asista-hackathon/rulesets/f13f8444-4b2d-472c-93b7-5d81be5e3b10","source":{"files":[{"content":"rules_version = '2';\nservice firebase.storage {\n  match /b/{bucket}/o {\n    // Users can only access their own files.\n    // Primary access is via the backend (Admin SDK, which bypasses rules),\n    // but these rules provide defense-in-depth against direct client access.\n    match /users/{userId}/{allPaths=**} {\n      allow read, write: if request.auth != null && request.auth.uid == userId;\n    }\n\n    // Deny everything else by default.\n    match /{allPaths=**} {\n      allow read, write: if false;\n    }\n  }\n}\n","name":"storage.rules"}]},"createTime":"2026-03-16T08:50:27.005807Z","metadata":{"services":["firebase.storage"]}}
+[debug] [2026-03-16T08:50:27.076Z] [rules] created ruleset projects/asista-hackathon/rulesets/f13f8444-4b2d-472c-93b7-5d81be5e3b10
+[debug] [2026-03-16T08:50:27.077Z] [rules] releasing firebase.storage/asista-hackathon.firebasestorage.app with ruleset projects/asista-hackathon/rulesets/f13f8444-4b2d-472c-93b7-5d81be5e3b10
+[debug] [2026-03-16T08:50:27.077Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:27.077Z] Checked if tokens are valid: true, expires at: 1773654362307
+[debug] [2026-03-16T08:50:27.078Z] >>> [apiv2][query] PATCH https://firebaserules.googleapis.com/v1/projects/asista-hackathon/releases/firebase.storage/asista-hackathon.firebasestorage.app [none]
+[debug] [2026-03-16T08:50:27.078Z] >>> [apiv2][body] PATCH https://firebaserules.googleapis.com/v1/projects/asista-hackathon/releases/firebase.storage/asista-hackathon.firebasestorage.app {"release":{"name":"projects/asista-hackathon/releases/firebase.storage/asista-hackathon.firebasestorage.app","rulesetName":"projects/asista-hackathon/rulesets/f13f8444-4b2d-472c-93b7-5d81be5e3b10"}}
+[debug] [2026-03-16T08:50:28.384Z] <<< [apiv2][status] PATCH https://firebaserules.googleapis.com/v1/projects/asista-hackathon/releases/firebase.storage/asista-hackathon.firebasestorage.app 200

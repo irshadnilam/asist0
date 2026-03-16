@@ -13,6 +13,10 @@ RUN uv sync --no-dev --no-install-project
 
 # Copy application code
 COPY main.py .
+COPY storage_ops.py .
+COPY skill_loader.py .
+COPY agent_tools.py .
+COPY config.yaml .
 COPY asisto_agent/ asisto_agent/
 
 # Expose port

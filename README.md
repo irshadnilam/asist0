@@ -1,70 +1,70 @@
 # Asisto
 
-A voice-first AI assistant built with [Google ADK](https://google.github.io/adk-docs/) (Agent Development Kit) and the Gemini Live API. Features real-time bidirectional voice streaming, a multi-agent architecture for visual UI rendering, persistent sessions, and long-term memory -- all deployed to Google Cloud.
+A voice-first AI assistant built with [Google ADK](https://google.github.io/adk-docs/) (Agent Development Kit) and the Gemini Live API. Features real-time bidirectional voice streaming, a file manager with floating editor windows, user-extensible agent skills, and Firebase-backed storage -- all deployed to Google Cloud.
 
 ## Highlights
 
-- **Multi-agent system** -- Voice agent (Gemini Live native audio) delegates to a UI agent (Gemini 2.5 Flash) via ADK's `AgentTool` for reliable structured output
-- **Bidirectional voice streaming** -- Real-time audio via WebSocket and Gemini Live API (`run_live` with `BIDI` streaming mode)
-- **A2UI protocol** -- Agent renders rich interactive UIs (cards, lists, layouts) in the user's workspace through session state
-- **Session state as source of truth** -- UI state lives in ADK session state, persists via Vertex AI Session Service, and syncs to the frontend in real time
-- **Long-term memory** -- Agent recalls past conversations via Vertex AI Memory Bank
+- **Voice streaming** -- Real-time bidirectional audio via WebSocket and Gemini Live API (`gemini-live-2.5-flash-native-audio`)
+- **File manager** -- SVAR Filemanager with Firestore realtime sync, drag-and-drop, context menus
+- **Floating editor windows** -- WinBox.js-powered windows with CodeMirror 6 editor, live markdown preview, image viewer
+- **User-extensible skills** -- Create custom agent capabilities as files in your `/skills/` directory following the [Agent Skills spec](https://agentskills.io/specification)
+- **Sandbox code execution** -- Skill scripts run in `AgentEngineSandboxCodeExecutor` for safe execution
+- **Agent file tools** -- Voice agent can list, read, write, create, delete, rename, and move files
 - **Firebase Auth** -- Google Sign-In with token verification on every request
-- **IDE-like dark UI** -- WebGL orb interface, animated transitions, JetBrains Mono, GitHub-dark palette
+- **IDE-like dark UI** -- WebGL orb, floating windows, JetBrains Mono, GitHub-dark palette
 
 ## Architecture
 
 ```
-Browser                              Cloud Run (FastAPI + ADK)
-+-------------------+               +----------------------------------+
-| WebGL Orb         |               |  Voice Agent (Live API)          |
-| Audio I/O         |--WebSocket--->|  gemini-live-2.5-flash-native-   |
-| A2UI Renderer     |<--WebSocket---|  audio                           |
-| (Zustand + React) |               |     |                            |
-+-------------------+               |     | AgentTool                  |
-                                    |     v                            |
-                                    |  UI Agent (run_async)            |
-                                    |  gemini-2.5-flash                |
-                                    |     |                            |
-                                    |     | update_ui tool             |
-                                    |     v                            |
-                                    |  Session State ["a2ui"]          |
-                                    |     |                            |
-                                    |     | state_delta                |
-                                    |     v                            |
-                                    |  WebSocket -> Frontend           |
-                                    +----------------------------------+
+Browser (React)                        Cloud Run (FastAPI + ADK)
++---------------------------+          +------------------------------------+
+| File Manager (SVAR)       |          |  WebSocket Handler                 |
+| Floating Windows (WinBox) |          |  ADK Runner (run_live)             |
+| CodeMirror 6 Editor       |          |                                    |
+| WebGL Orb                 |--WS----->|  Voice Agent                       |
+| Audio I/O (16kHz/24kHz)   |<-WS------|  gemini-live-2.5-flash-native-audio|
+| Firestore Realtime Sync   |          |  + SkillToolset (user skills)      |
++---------------------------+          |  + File Tools (storage_ops)        |
+        |                              |  + AgentEngineSandboxCodeExecutor  |
+        | REST (server fns)            +-------------|----------------------+
+        v                                            |
++---------------------------+          +-------------|----------------------+
+| TanStack Start (Nitro)    |          | Firebase Storage    | Firestore   |
+| Server Functions (proxy)  |--REST--->| gs://bucket/users/  | users/{uid} |
++---------------------------+          | {uid}/{path...}     | /files/{id} |
+                                       +------------------------------------+
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a deep dive on ADK usage, multi-agent patterns, state management, and the A2UI protocol.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
 
 ## ADK Features Used
 
 | Feature | How It's Used |
 |---------|---------------|
-| **Multi-Agent (AgentTool)** | Voice agent wraps UI agent as a tool for explicit invocation |
 | **Gemini Live API (run_live)** | Bidirectional audio streaming with native voice model |
-| **Session State** | `a2ui` key holds full UI state, triggers `state_delta` for real-time sync |
-| **InstructionProvider** | Dynamic system prompts inject current UI state each turn |
-| **FunctionTool** | `update_ui` tool applies A2UI messages to session state |
+| **SkillToolset** | User-defined skills loaded from Firebase Storage at session start |
+| **AgentEngineSandboxCodeExecutor** | Sandboxed execution of skill scripts (.py, .sh) |
+| **FunctionTool (closures)** | 7 file-operation tools (list, read, write, create, delete, rename, move) |
 | **VertexAiSessionService** | Persistent sessions backed by Agent Engine |
 | **VertexAiMemoryBankService** | Long-term memory across sessions |
-| **RunConfig** | Configures BIDI streaming, audio modality, transcription, session resumption |
+| **RunConfig** | BIDI streaming, audio modality, transcription, session resumption |
 | **Event filtering** | Backend strips tool internals, forwards only user-facing data |
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Agent Framework | Google ADK (Python) |
-| Voice Model | `gemini-live-2.5-flash-native-audio` (Vertex AI) |
-| UI Model | `gemini-2.5-flash` (Vertex AI) |
+| Agent Framework | Google ADK 1.27+ (Python) |
+| Voice Model | `gemini-live-2.5-flash-native-audio` (Vertex AI, `us-central1` only) |
 | Backend | FastAPI + Uvicorn |
 | Frontend | TanStack Start (React 19) + Bun + Tailwind v4 |
-| UI State | Zustand with A2UI protocol |
+| File Manager | `@svar-ui/react-filemanager` + WillowDark theme |
+| Editor Windows | WinBox.js (custom React wrapper) |
+| Code Editor | CodeMirror 6 + oneDark theme |
 | Auth | Firebase Authentication (Google Sign-In) |
+| Storage | Firebase Storage (blobs) + Firestore (metadata, realtime) |
 | Sessions | Vertex AI Agent Engine (Session Service + Memory Bank) |
-| Infrastructure | Pulumi (Python), Docker, Cloud Run |
+| Infrastructure | Pulumi (Python, local state), Docker, Cloud Run |
 | Domains | `asisto.agents.sh`, `asisto-api.agents.sh` |
 
 ## Project Structure
@@ -72,70 +72,80 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a deep dive on ADK usage, multi-agent
 ```
 asisto/
 ├── asisto_agent/                    # ADK agent package
-│   ├── agent.py                     # Voice agent -- Live API, AgentTool(ui_renderer)
-│   ├── ui_agent.py                  # UI agent -- gemini-2.5-flash, InstructionProvider, update_ui
-│   ├── tools.py                     # update_ui FunctionTool -- applies A2UI to session state
-│   └── __init__.py
+│   ├── agent.py                     # Voice agent + create_agent() factory
+│   └── __init__.py                  #   with SkillToolset + SandboxCodeExecutor
 ├── app/                             # Frontend (TanStack Start + Bun)
 │   ├── src/
-│   │   ├── a2ui/                    # A2UI v0.9 renderer
-│   │   │   ├── store.ts             # Zustand store -- surfaces, syncFromState
-│   │   │   ├── types.ts             # Full A2UI protocol TypeScript types
-│   │   │   ├── tree.ts              # Flat adjacency list -> renderable tree
-│   │   │   ├── registry.ts          # Component type -> React renderer map
-│   │   │   ├── SurfaceRenderer.tsx   # Top-level renderer with useShallow
-│   │   │   └── components/          # Text, Row, Column, Card, Button, Image, Divider, Icon
 │   │   ├── lib/
-│   │   │   ├── useAgentSocket.ts    # WebSocket client (handles a2ui_state messages)
-│   │   │   ├── useAudioCapture.ts   # Mic capture (AudioWorklet, 16kHz PCM)
-│   │   │   ├── useAudioPlayback.ts  # Speaker playback (pcm-player, 24kHz)
-│   │   │   ├── useAuth.tsx          # Firebase Auth provider + hook
-│   │   │   ├── api.ts               # TanStack Start server functions
-│   │   │   └── firebase.ts          # Firebase init
+│   │   │   ├── api.ts              # Server functions (file CRUD, download, save)
+│   │   │   ├── firebase.ts         # Firebase init + Firestore export
+│   │   │   ├── useAuth.tsx         # AuthProvider + useAuth hook
+│   │   │   ├── useFiles.ts         # Firestore realtime subscription (onSnapshot)
+│   │   │   ├── useAgentSocket.ts   # WebSocket client (direct browser-to-backend)
+│   │   │   ├── useAudioCapture.ts  # Mic capture (AudioWorklet, 16kHz PCM)
+│   │   │   └── useAudioPlayback.ts # Speaker playback (pcm-player, 24kHz)
 │   │   ├── components/
-│   │   │   └── Orb.tsx              # WebGL orb (ogl) with center<->corner animation
-│   │   └── routes/
-│   │       └── app/
-│   │           ├── index.tsx        # Workspace list with delete
-│   │           └── $workspaceId.tsx  # Workspace view -- orb, audio, A2UI
+│   │   │   ├── Window.tsx          # WinBox.js React wrapper (dynamic import for SSR)
+│   │   │   ├── FileViewer.tsx      # CodeMirror editor + markdown preview + image viewer
+│   │   │   └── Orb.tsx            # WebGL orb (ogl)
+│   │   ├── routes/
+│   │   │   ├── index.tsx          # Landing / sign-in
+│   │   │   └── app/
+│   │   │       └── index.tsx      # Main workspace: file manager + floating windows
+│   │   └── styles.css             # SVAR vars, Tailwind fixes, WinBox dark theme
 │   └── public/
-│       └── capture-processor.js     # AudioWorklet (float32 -> int16)
-├── infra/                           # Pulumi IaC (Python)
-│   └── __main__.py                  # Cloud Run, Artifact Registry, domain mappings
-├── main.py                          # FastAPI -- WebSocket streaming, REST, event filtering
-├── config.yaml                      # Central config (project, region, engine ID)
-├── Dockerfile                       # Backend container
-├── Makefile                         # Build, deploy, dev commands
-├── pyproject.toml                   # Python dependencies (uv)
-├── ARCHITECTURE.md                  # Deep dive on ADK usage and system design
-├── DEPLOYMENT.md                    # Full deployment guide
-└── LICENSE                          # MIT
+│       └── capture-processor.js   # AudioWorklet (float32 → int16)
+├── infra/                          # Pulumi IaC (Python)
+│   └── __main__.py                # Cloud Run, Artifact Registry, IAM, domain mappings
+├── main.py                         # FastAPI — WebSocket, file REST endpoints, auth
+├── storage_ops.py                  # Firebase Storage + Firestore CRUD + seed_default_files
+├── skill_loader.py                 # Reads user skills from Storage, parses SKILL.md
+├── agent_tools.py                  # File-operation tool closures for the agent
+├── config.yaml                     # Central config (project, region, bucket, engine ID)
+├── firebase.json                   # Points to firestore.rules + storage.rules
+├── firestore.rules                 # users/{userId}/files/{fileId} — auth.uid == userId
+├── storage.rules                   # users/{userId}/{allPaths=**} — auth.uid == userId
+├── Dockerfile                      # Backend container
+├── Makefile                        # Build, deploy, dev commands
+├── pyproject.toml                  # Python dependencies (uv)
+├── ARCHITECTURE.md                 # System design deep dive
+├── DEPLOYMENT.md                   # Full deployment guide
+└── LICENSE                         # MIT
 ```
 
 ## API
 
-### REST (Workspace Management)
+### REST (File Management)
 
-All endpoints require `Authorization: Bearer <firebase-id-token>`.
+All endpoints require `Authorization: Bearer <firebase-id-token>`. User ID is extracted from the token server-side.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/workspaces` | Create a new workspace |
-| `GET` | `/workspaces` | List workspace IDs |
-| `GET` | `/workspaces/{id}` | Get workspace |
-| `DELETE` | `/workspaces/{id}` | Delete workspace |
+| `GET` | `/files` | List root-level files |
+| `GET` | `/files/{id}` | List folder contents (lazy loading) |
+| `POST` | `/files` | Create file/folder at root |
+| `POST` | `/files/{id}` | Create file/folder in subfolder |
+| `POST` | `/upload` | Upload file at root |
+| `POST` | `/upload/{id}` | Upload file to subfolder |
+| `PUT` | `/files/{id}` | Rename file/folder |
+| `PUT` | `/files` | Move or copy files |
+| `DELETE` | `/files` | Delete files/folders |
+| `GET` | `/download/{id}` | Download file (streams content) |
+| `GET` | `/info` | Drive info + seed default files for new users |
 
-### WebSocket (Live Streaming)
+### WebSocket (Voice Streaming)
 
 `WS /ws/{workspace_id}?token=<firebase-id-token>`
 
 | Direction | Format | Description |
 |-----------|--------|-------------|
-| Client -> Server | JSON `{"type": "text", "text": "..."}` | Text message |
-| Client -> Server | Binary (PCM 16kHz 16-bit) | Audio |
-| Server -> Client | JSON with `content`, `turnComplete`, `interrupted` | Agent response |
-| Server -> Client | JSON with `inputTranscription` / `outputTranscription` | Transcriptions |
-| Server -> Client | JSON `{"type": "a2ui_state", "state": {...}}` | UI state sync |
+| Client → Server | JSON `{"type": "text", "text": "..."}` | Text message |
+| Client → Server | Binary (PCM 16kHz 16-bit) | Audio |
+| Server → Client | JSON with `content` | Agent audio/text response |
+| Server → Client | JSON with `turnComplete` | Agent finished speaking |
+| Server → Client | JSON with `interrupted` | User interrupted |
+| Server → Client | JSON with `inputTranscription` | User speech transcript |
+| Server → Client | JSON with `outputTranscription` | Agent speech transcript |
 
 ## Quick Start
 
@@ -144,7 +154,7 @@ All endpoints require `Authorization: Bearer <firebase-id-token>`.
 - Python 3.13+ with [uv](https://docs.astral.sh/uv/)
 - [Bun](https://bun.sh/)
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) (authenticated)
-- Google Cloud project with Vertex AI API enabled
+- Google Cloud project with Vertex AI + Firebase enabled
 
 ### Local Development
 
@@ -154,10 +164,11 @@ uv sync
 cd app && bun install && cd ..
 
 # Configure
-cp config.yaml.example config.yaml
-# Edit config.yaml: set project_id and agent_engine resource_id
-
+cp config.yaml.example config.yaml  # Edit with your project details
 cp app/.env.example app/.env
+
+# Deploy Firebase security rules
+make deploy-rules
 
 # Run backend (8080) + frontend (3000)
 make dev
@@ -171,6 +182,7 @@ make dev-api         Backend only
 make dev-app         Frontend only
 make deploy-agent    Deploy agent to Agent Engine
 make deploy-infra    Deploy to Cloud Run via Pulumi
+make deploy-rules    Deploy Firebase security rules
 make deploy-all      Deploy agent + infrastructure
 make logs            View backend logs
 make status          Check deployment status

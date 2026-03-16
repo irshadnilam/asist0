@@ -1,36 +1,35 @@
 # Asisto Deployment Guide
 
-This guide covers deploying the Asisto agent to Google Cloud, including:
+This guide covers deploying Asisto to Google Cloud:
 - Agent deployment to **Vertex AI Agent Engine**
-- FastAPI service deployment to **Cloud Run**
-- **Firebase Auth** (Google Sign-In)
-- Infrastructure management with **Pulumi** (Python)
+- Backend + frontend to **Cloud Run**
+- **Firebase** Authentication, Storage, and Firestore
+- Infrastructure management with **Pulumi** (Python, local state)
 
 ## Architecture
 
 ```
 ┌─────────────────┐                    ┌──────────────────┐
-│                 │     HTTPS          │  Cloud Run       │
-│  Browser        │◄──────────────────►│  (TanStack Start)│
-│  (Firebase Auth)│                    │  asisto-app      │
-└─────────────────┘                    └────────┬─────────┘
-                                                │ API_ENDPOINT
-                                                ▼
-                                       ┌──────────────────┐
-                                       │  Cloud Run       │
-                                       │  (FastAPI + WS)  │
-                                       │  asisto-api      │
-                                       │  Firebase Admin  │
-                                       └────────┬─────────┘
-                                                │
-                          ┌─────────────────────┼─────────────────────┐
-                          │                     │                     │
-                          ▼                     ▼                     ▼
-                   ┌──────────────┐   ┌─────────────────┐   ┌──────────────┐
-                   │ Agent Engine │   │ Vertex AI        │   │ Vertex AI    │
-                   │ (Reasoning   │   │ Session Service  │   │ Memory Bank  │
-                   │  Engine)     │   │                  │   │ Service      │
-                   └──────────────┘   └─────────────────┘   └──────────────┘
+│  Browser         │     HTTPS          │  Cloud Run       │
+│  (Firebase Auth) │◄──────────────────►│  (TanStack Start)│
+│  (Firestore      │                    │  asisto-app      │
+│   realtime sync) │                    └────────┬─────────┘
+└─────────────────┘                              │ API_ENDPOINT
+                                                 ▼
+        ┌────── WS (direct) ──────►  ┌──────────────────┐
+        │                            │  Cloud Run       │
+        │                            │  (FastAPI + WS)  │
+        │                            │  asisto-api      │
+        │                            └────────┬─────────┘
+        │                                     │
+        │              ┌──────────────────────┼──────────────────────┐
+        │              │                      │                      │
+        │              ▼                      ▼                      ▼
+        │   ┌────────────────┐    ┌─────────────────┐    ┌────────────────┐
+        │   │ Agent Engine   │    │ Firebase Storage │    │ Firestore      │
+        │   │ (Sessions +    │    │ (file blobs +    │    │ (file metadata │
+        │   │  Memory Bank)  │    │  skill files)    │    │  + realtime)   │
+        │   └────────────────┘    └─────────────────┘    └────────────────┘
 ```
 
 ## Prerequisites
@@ -39,17 +38,18 @@ This guide covers deploying the Asisto agent to Google Cloud, including:
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| **gcloud CLI** | Google Cloud authentication & management | [Install](https://cloud.google.com/sdk/docs/install) |
+| **gcloud CLI** | Google Cloud auth & management | [Install](https://cloud.google.com/sdk/docs/install) |
 | **Python 3.13+** | Runtime | [python.org](https://www.python.org/) |
 | **uv** | Python package manager | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | **Pulumi** | Infrastructure as code | `brew install pulumi/tap/pulumi` |
 | **Docker** | Container image builds | [docker.com](https://www.docker.com/) |
 | **Bun** | Frontend runtime + package manager | `curl -fsSL https://bun.sh/install \| bash` |
+| **Firebase CLI** | Rules deployment | `npm install -g firebase-tools` |
 | **make** | Build orchestration | Pre-installed on macOS/Linux |
 
 ### Required GCP APIs
 
-These are automatically enabled by Pulumi, but you can enable them manually:
+Automatically enabled by Pulumi, or enable manually:
 
 ```bash
 gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
@@ -59,6 +59,8 @@ gcloud services enable artifactregistry.googleapis.com --project=YOUR_PROJECT_ID
 gcloud services enable cloudbuild.googleapis.com --project=YOUR_PROJECT_ID
 gcloud services enable firebase.googleapis.com --project=YOUR_PROJECT_ID
 gcloud services enable identitytoolkit.googleapis.com --project=YOUR_PROJECT_ID
+gcloud services enable firestore.googleapis.com --project=YOUR_PROJECT_ID
+gcloud services enable storage.googleapis.com --project=YOUR_PROJECT_ID
 ```
 
 ---
@@ -66,20 +68,12 @@ gcloud services enable identitytoolkit.googleapis.com --project=YOUR_PROJECT_ID
 ## Step 1: Authenticate with Google Cloud
 
 ```bash
-# Login to your Google account
 gcloud auth login
-
-# Set application default credentials (used by the app and Pulumi)
 gcloud auth application-default login
-
-# Set your default project
 gcloud config set project YOUR_PROJECT_ID
-
-# Verify
-gcloud config get-value project
 ```
 
-## Step 2: Setup Firebase Auth
+## Step 2: Setup Firebase
 
 ### Add Firebase to your GCP project
 
@@ -98,14 +92,27 @@ Update the Firebase config in `app/src/lib/firebase.ts` with the output values.
 
 ### Enable Google Sign-In
 
-1. Go to the [Firebase Console](https://console.firebase.google.com/project/YOUR_PROJECT_ID/authentication/providers)
-2. Click **Sign-in method** tab
-3. Enable **Google** provider
-4. Add your Cloud Run frontend domain to **Authorized domains**
+1. Go to [Firebase Console](https://console.firebase.google.com/) → Authentication → Sign-in method
+2. Enable **Google** provider
+3. Add your Cloud Run frontend domain to **Authorized domains**
+
+### Create Firestore database
+
+```bash
+gcloud firestore databases create --location=us-central1 --project=YOUR_PROJECT_ID
+```
+
+### Deploy security rules
+
+```bash
+make deploy-rules
+```
+
+This deploys both `firestore.rules` and `storage.rules`:
+- Firestore: `users/{userId}/files/{fileId}` -- only `auth.uid == userId`
+- Storage: `users/{userId}/{allPaths=**}` -- only `auth.uid == userId`
 
 ## Step 3: Create config.yaml
-
-Copy the example config and fill in your project details:
 
 ```bash
 cp config.yaml.example config.yaml
@@ -119,8 +126,7 @@ gcp:
   region: "us-central1"
 
 agent_engine:
-  # Leave empty for now -- we'll fill this after deploying the agent
-  resource_id: ""
+  resource_id: ""  # Fill after deploying agent (Step 4)
 
 cloud_run:
   service_name: "asisto-api"
@@ -132,248 +138,175 @@ frontend:
   min_instances: 0
   max_instances: 3
 
+firebase:
+  storage_bucket: "your-project-id.firebasestorage.app"
+
 agent:
   model: "gemini-live-2.5-flash-native-audio"
   display_name: "Asisto Agent"
 ```
 
-**Important:** `config.yaml` is in `.gitignore` and should never be committed.
-It contains project-specific configuration. The `config.yaml.example` is the
-template that gets committed.
+**Important:** `config.yaml` is in `.gitignore`. Never commit it.
 
 ## Step 4: Deploy Agent to Agent Engine
-
-This deploys your agent code to Vertex AI Agent Engine, which provides:
-- Managed session persistence
-- Memory bank service
-- Scalable agent hosting
 
 ```bash
 make deploy-agent
 ```
 
-This runs `adk deploy agent_engine` under the hood. It takes several minutes.
-
-On success, you'll see output like:
+On success:
 
 ```
 AgentEngine created. Resource name:
-  projects/875791790592/locations/us-central1/reasoningEngines/2439436970523361280
+  projects/123456/locations/us-central1/reasoningEngines/2439436970523361280
 ```
 
-**Copy the resource ID** (the number at the end, e.g., `2439436970523361280`)
-and update `config.yaml`:
+Copy the resource ID and update `config.yaml`:
 
 ```yaml
 agent_engine:
-  resource_id: "2439436970523361280"  # <-- paste your ID here
+  resource_id: "2439436970523361280"
 ```
 
-### How to find your resource ID later
-
-If you lose the ID, you can find it via:
+### Find your resource ID later
 
 ```bash
 gcloud ai reasoning-engines list --project=YOUR_PROJECT_ID --region=us-central1
 ```
 
-Or in the [Agent Engine UI](https://console.cloud.google.com/vertex-ai/agents/agent-engines).
+## Step 5: Setup Pulumi
 
-## Step 4: Setup Pulumi
+### Configure state backend
 
-### Configure Pulumi state backend (do this first)
-
-Pulumi needs somewhere to store its state (a record of what infrastructure
-exists). You have three options:
-
-**Option A: Local file (recommended for hackathons / solo dev)**
-
-No account needed. State is stored on your machine at `~/.pulumi/`:
-
+**Local file (recommended for solo dev):**
 ```bash
 pulumi login --local
 ```
 
-**Option B: Pulumi Cloud (free account, good for teams)**
-
-State stored in Pulumi's cloud service. Requires a free account:
-
-```bash
-pulumi login
-```
-
-**Option C: Google Cloud Storage bucket**
-
-State stored in your own GCS bucket. No Pulumi account needed:
-
-```bash
-pulumi login gs://your-bucket-name
-```
+Set empty passphrase when prompted (or set `PULUMI_CONFIG_PASSPHRASE=""`).
 
 ### Run setup
-
-Once you've chosen a state backend, run the setup:
 
 ```bash
 make setup
 ```
 
-This does three things:
-1. Configures Docker to push to Artifact Registry (`gcloud auth configure-docker`)
-2. Installs Pulumi Python packages in `infra/venv/`
+This:
+1. Configures Docker for Artifact Registry
+2. Installs Pulumi Python packages
 3. Creates a Pulumi stack named `dev`
 
-## Step 5: Deploy Infrastructure (Cloud Run)
+## Step 6: Deploy Infrastructure
 
-Preview what will be created:
-
+Preview:
 ```bash
 make preview
 ```
 
 Deploy:
-
 ```bash
 make deploy-infra
 ```
 
 This provisions:
 1. **Artifact Registry** -- Docker image repository
-2. **Docker images** -- Builds and pushes backend (FastAPI) and frontend (TanStack Start)
-3. **Service Account** -- With Vertex AI User role
-4. **Backend Cloud Run service** -- Runs FastAPI + WebSocket server
-5. **Frontend Cloud Run service** -- Runs TanStack Start app (Bun + Nitro)
+2. **Service Account** -- with Vertex AI User, Datastore User, Storage Object Admin, Token Creator roles
+3. **Backend Cloud Run** -- FastAPI + WebSocket + ADK runner + file API
+4. **Frontend Cloud Run** -- TanStack Start (Bun + Nitro)
+5. **Docker images** -- built and pushed for both services
 
-On success, Pulumi outputs the Cloud Run URLs:
-
+Pulumi outputs:
 ```
-Outputs:
-    service_url:    "https://asisto-api-xxxxx-uc.a.run.app"
-    frontend_url:   "https://asisto-app-xxxxx-uc.a.run.app"
+service_url:    "https://asisto-api-xxxxx-uc.a.run.app"
+frontend_url:   "https://asisto-app-xxxxx-uc.a.run.app"
 ```
 
-The frontend's `API_ENDPOINT` env var is automatically set to the backend's
-Cloud Run URL by Pulumi. Every deploy picks up the latest backend URL.
+The frontend's `API_ENDPOINT` is automatically set to the backend URL by Pulumi.
 
-### Or deploy everything at once
+### Deploy everything at once
 
 ```bash
 make deploy-all
 ```
 
-This runs `deploy-agent` first, prompts you to update `config.yaml`, then
-runs `deploy-infra`.
-
 ## API Endpoints
 
-Once deployed, the backend Cloud Run service exposes:
+All REST endpoints require `Authorization: Bearer <firebase-id-token>`.
 
-All REST endpoints require `Authorization: Bearer <firebase-id-token>` header.
-The user ID is extracted from the token server-side.
+### File Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/workspaces` | Create a new workspace |
-| `GET` | `/workspaces` | List all workspace IDs for the authenticated user |
-| `GET` | `/workspaces/{workspace_id}` | Get a workspace by ID |
-| `DELETE` | `/workspaces/{workspace_id}` | Delete a workspace |
-| `WS` | `/ws/{workspace_id}?token=<firebase-id-token>` | Bidirectional streaming (voice + text) |
+| `GET` | `/files` | List root-level files |
+| `GET` | `/files/{id}` | List folder contents |
+| `POST` | `/files` | Create file/folder at root |
+| `POST` | `/files/{id}` | Create in subfolder |
+| `POST` | `/upload` | Upload file at root |
+| `POST` | `/upload/{id}` | Upload to subfolder |
+| `PUT` | `/files/{id}` | Rename |
+| `PUT` | `/files` | Move/copy |
+| `DELETE` | `/files` | Delete |
+| `GET` | `/download/{id}` | Stream file content |
+| `GET` | `/info` | Drive info + auto-seed for new users |
 
-### WebSocket protocol
+### WebSocket
 
-**Connect:** `wss://YOUR_BACKEND_URL/ws/{workspace_id}?token=FIREBASE_ID_TOKEN`
+**Connect:** `wss://BACKEND_URL/ws/default?token=FIREBASE_ID_TOKEN`
 
-**Client -> Server (text):**
-```json
-{"type": "text", "text": "What time is it in Colombo?"}
-```
-
-**Client -> Server (image):**
-```json
-{"type": "image", "data": "base64_encoded_data", "mimeType": "image/jpeg"}
-```
-
-**Client -> Server (audio):**
-Raw binary frames -- PCM audio, 16kHz, 16-bit.
-
-**Server -> Client:**
-JSON-encoded ADK Event objects (camelCase field names). Audio data is URL-safe
-base64 encoded PCM int16 at 24kHz.
+| Direction | Format | Description |
+|-----------|--------|-------------|
+| Client → Server | JSON `{"type": "text", "text": "..."}` | Text message |
+| Client → Server | Binary (PCM 16kHz 16-bit) | Audio |
+| Server → Client | JSON with `content`, `turnComplete`, `interrupted` | Agent response |
+| Server → Client | JSON with `inputTranscription` / `outputTranscription` | Transcriptions |
 
 ## Configuration Reference
-
-All configuration flows from `config.yaml`. Environment variables override
-config values when set:
 
 | Config path | Env var override | Description |
 |-------------|-----------------|-------------|
 | `gcp.project_id` | `GOOGLE_CLOUD_PROJECT` | GCP project ID |
-| `gcp.region` | `GOOGLE_CLOUD_LOCATION` | GCP region |
-| `agent_engine.resource_id` | `AGENT_ENGINE_ID` | Reasoning Engine resource ID |
+| `gcp.region` | `GOOGLE_CLOUD_LOCATION` | GCP region (must be `us-central1` for Live API) |
+| `agent_engine.resource_id` | `AGENT_ENGINE_ID` | Agent Engine resource ID |
 | `agent.model` | `ASISTO_AGENT_MODEL` | Gemini model name |
+| `firebase.storage_bucket` | `STORAGE_BUCKET` | Firebase Storage bucket |
 
-On Cloud Run, the Pulumi code sets these env vars from `config.yaml` automatically.
-The frontend receives `API_ENDPOINT` (the backend Cloud Run URL) automatically
-from Pulumi -- no manual configuration needed.
+## Updating
 
-## Updating the Agent
-
-After making changes to `asisto_agent/agent.py`:
+### Agent changes (`asisto_agent/`)
 
 ```bash
-# Redeploy agent to Agent Engine (creates new resource -- update config.yaml)
-make deploy-agent
-
-# Redeploy Cloud Run (picks up code changes)
-make deploy-infra
+make deploy-agent       # Creates new Agent Engine resource
+# Update config.yaml with new resource_id
+make deploy-infra       # Redeploy Cloud Run
 ```
 
-Note: `adk deploy agent_engine` creates a **new** Reasoning Engine resource
-each time. Update `config.yaml` with the new `resource_id` before running
-`make deploy-infra`.
-
-## Updating the Frontend
-
-After making changes to the frontend (`app/`):
+### Backend changes (`main.py`, `storage_ops.py`, `agent_tools.py`, `skill_loader.py`)
 
 ```bash
-# Redeploy everything (backend + frontend)
-make deploy-infra
+make deploy-infra       # Rebuilds Docker image + redeploys
 ```
 
-The frontend container is rebuilt and redeployed. The `API_ENDPOINT` env var
-is always set to the latest backend Cloud Run URL by Pulumi.
-
-To delete an old agent:
+### Frontend changes (`app/`)
 
 ```bash
-gcloud ai reasoning-engines delete OLD_RESOURCE_ID \
-  --project=YOUR_PROJECT_ID --region=us-central1
+make deploy-frontend    # Rebuilds + redeploys frontend only
+```
+
+### Firebase rules changes
+
+```bash
+make deploy-rules
 ```
 
 ## Custom Domains (Optional)
 
-You can map custom domains to the Cloud Run services (e.g., `asisto.agents.sh`
-and `asisto-api.agents.sh`) instead of using the default `*.run.app` URLs.
-
-### Step 1: Verify domain ownership
-
-Google requires you to prove you own the domain before mapping it. Run:
+### 1. Verify domain ownership
 
 ```bash
 gcloud domains verify agents.sh
 ```
 
-This opens Google Search Console in your browser. Choose the **DNS record**
-verification method and add the TXT record it provides to your DNS:
-
-| Name | Type | Value |
-|------|------|-------|
-| `agents.sh` | TXT | `google-site-verification=...` (value from Search Console) |
-
-Wait for verification to complete (usually 1--2 minutes after DNS propagates).
-
-### Step 2: Configure domains in config.yaml
+### 2. Configure in config.yaml
 
 ```yaml
 domains:
@@ -381,78 +314,32 @@ domains:
   api: "asisto-api.agents.sh"
 ```
 
-Leave values empty to skip domain mapping.
-
-### Step 3: Deploy
+### 3. Deploy
 
 ```bash
 make deploy-infra
 ```
 
-Pulumi creates the domain mappings and outputs the required DNS records:
-
-```
-frontend_dns_record: "CNAME asisto.agents.sh -> ghs.googlehosted.com"
-api_dns_record:      "CNAME asisto-api.agents.sh -> ghs.googlehosted.com"
-```
-
-When a custom API domain is set, the frontend's `API_ENDPOINT` env var
-automatically points to `https://asisto-api.agents.sh` instead of the
-`*.run.app` URL. WebSocket connections from the browser will use the custom
-domain as well.
-
-### Step 4: Add CNAME records in DNS
-
-In your DNS provider (e.g., Route 53), create:
+### 4. Add DNS records
 
 | Name | Type | Value |
 |------|------|-------|
 | `asisto.agents.sh` | CNAME | `ghs.googlehosted.com` |
 | `asisto-api.agents.sh` | CNAME | `ghs.googlehosted.com` |
 
-### Step 5: Wait for SSL certificate provisioning
+### 5. Add domain to Firebase Auth
 
-Google automatically provisions a managed TLS certificate. This can take
-15--30 minutes after DNS propagates. Check status with:
+Firebase Console → Authentication → Settings → Authorized domains → Add `asisto.agents.sh`
 
-```bash
-gcloud run domain-mappings describe \
-  --domain asisto.agents.sh --region us-central1
-gcloud run domain-mappings describe \
-  --domain asisto-api.agents.sh --region us-central1
-```
-
-Look for `CertificateProvisioned` status to be `True`.
-
-### Step 6: Update Firebase authorized domains
-
-Add the frontend custom domain to Firebase Auth so Google Sign-In works:
-
-1. Go to [Firebase Console](https://console.firebase.google.com/) → Authentication → Settings → Authorized domains
-2. Add `asisto.agents.sh`
-
-### Removing domain mappings
-
-To remove domain mappings, either:
-
-- Clear the `domains` values in `config.yaml` and run `make deploy-infra`, or
-- Remove them manually:
-
-```bash
-gcloud run domain-mappings delete --domain asisto.agents.sh --region us-central1
-gcloud run domain-mappings delete --domain asisto-api.agents.sh --region us-central1
-```
+SSL certificate provisions automatically (15-30 minutes after DNS propagates).
 
 ## Tearing Down
 
-Remove Cloud Run and all Pulumi-managed infrastructure:
-
 ```bash
-make destroy
+make destroy            # Remove Cloud Run + Pulumi resources
 ```
 
-This does **not** delete the Agent Engine. To delete it:
-
+To also delete the Agent Engine:
 ```bash
 gcloud ai reasoning-engines delete RESOURCE_ID \
   --project=YOUR_PROJECT_ID --region=us-central1
@@ -462,54 +349,36 @@ gcloud ai reasoning-engines delete RESOURCE_ID \
 
 ### "Agent Engine resource_id not set"
 
-You haven't set the resource ID in `config.yaml`. Run `make deploy-agent`
-first and copy the ID.
+Run `make deploy-agent` first and copy the ID to `config.yaml`.
 
 ### Docker authentication errors
 
-Run `make setup` again, or manually:
-
 ```bash
+make setup
+# or manually:
 gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 ```
 
-### Quota errors from gcloud
+### WebSocket 1008 error
 
-Set a quota project:
+The Live API model is only available in `us-central1`. Ensure `GOOGLE_CLOUD_LOCATION=us-central1`.
 
-```bash
-gcloud auth application-default set-quota-project YOUR_PROJECT_ID
-```
+### "document is not defined" (SSR)
+
+WinBox.js must be dynamically imported inside `useEffect`. The `Window.tsx` component handles this automatically.
+
+### SVAR filter crash on open-file
+
+Ensure `data` prop contains all files (not just root), and `open-file` uses `api.intercept()` to stop SVAR's internal pipeline.
 
 ### Cloud Run WebSocket timeouts
 
-Cloud Run has a default request timeout. The Pulumi config sets it to 300s.
-For longer WebSocket sessions, increase `timeout` in `infra/__main__.py`.
+Default timeout is 300s in Pulumi config. Increase `timeout` in `infra/__main__.py` for longer sessions.
 
-### Domain mapping fails with "domain not verified"
-
-You need to verify domain ownership first:
+### Quota errors
 
 ```bash
-gcloud domains verify YOUR_DOMAIN
-```
-
-Follow the instructions to add a TXT record, then retry `make deploy-infra`.
-
-### SSL certificate stuck in "pending"
-
-The managed certificate won't provision until DNS CNAME records point to
-`ghs.googlehosted.com`. Verify your CNAME records are correct:
-
-```bash
-dig asisto.agents.sh CNAME +short
-# Should return: ghs.googlehosted.com.
-```
-
-If DNS is correct, wait up to 30 minutes. Check status with:
-
-```bash
-gcloud run domain-mappings describe --domain YOUR_DOMAIN --region us-central1
+gcloud auth application-default set-quota-project YOUR_PROJECT_ID
 ```
 
 ## Make Commands
@@ -521,10 +390,11 @@ make dev-api         # Run FastAPI backend only (localhost:8080)
 make dev-adk         # Run ADK web UI locally
 make dev-app         # Run frontend dev server only (localhost:3000)
 make deploy-agent    # Deploy agent to Agent Engine
+make deploy-rules    # Deploy Firebase security rules
 make setup           # First-time Pulumi setup
 make preview         # Preview infrastructure changes
 make deploy-infra    # Deploy backend + frontend to Cloud Run
-make deploy-frontend # Deploy frontend only to Cloud Run
+make deploy-frontend # Deploy frontend only
 make deploy-all      # Deploy agent + infrastructure
 make logs            # View backend Cloud Run logs
 make logs-app        # View frontend Cloud Run logs

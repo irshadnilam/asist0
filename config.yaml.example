@@ -33,3 +33,6 @@ domains:
 agent:
   model: "gemini-live-2.5-flash-native-audio"
   display_name: "Asisto Agent"
+
+firebase:
+  storage_bucket: ""  # e.g., "asista-hackathon.firebasestorage.app"

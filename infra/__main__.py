@@ -37,6 +37,10 @@ min_instances = app_config["cloud_run"]["min_instances"]
 max_instances = app_config["cloud_run"]["max_instances"]
 agent_model = app_config["agent"]["model"]
 
+# Firebase config
+firebase_config = app_config.get("firebase", {})
+storage_bucket = firebase_config.get("storage_bucket", "")
+
 # Frontend config
 frontend_config = app_config.get("frontend", {})
 frontend_service_name = frontend_config.get("service_name", "asisto-app")
@@ -64,6 +68,8 @@ apis = [
     "cloudbuild.googleapis.com",
     "firebase.googleapis.com",
     "identitytoolkit.googleapis.com",
+    "firestore.googleapis.com",
+    "storage.googleapis.com",
 ]
 
 enabled_apis = []
@@ -126,6 +132,30 @@ vertex_ai_binding = gcp.projects.IAMMember(
     member=pulumi.Output.concat("serviceAccount:", service_account.email),
 )
 
+# Grant Firestore User role (for file metadata)
+firestore_binding = gcp.projects.IAMMember(
+    "asisto-sa-firestore",
+    project=project,
+    role="roles/datastore.user",
+    member=pulumi.Output.concat("serviceAccount:", service_account.email),
+)
+
+# Grant Storage Object Admin role (for file blobs + signed URLs)
+storage_binding = gcp.projects.IAMMember(
+    "asisto-sa-storage",
+    project=project,
+    role="roles/storage.objectAdmin",
+    member=pulumi.Output.concat("serviceAccount:", service_account.email),
+)
+
+# Grant Service Account Token Creator (needed for generating signed URLs)
+token_creator_binding = gcp.projects.IAMMember(
+    "asisto-sa-token-creator",
+    project=project,
+    role="roles/iam.serviceAccountTokenCreator",
+    member=pulumi.Output.concat("serviceAccount:", service_account.email),
+)
+
 # Backend Cloud Run service
 cloud_run_service = gcp.cloudrunv2.Service(
     service_name,
@@ -156,12 +186,19 @@ cloud_run_service = gcp.cloudrunv2.Service(
                     {"name": "GOOGLE_CLOUD_LOCATION", "value": region},
                     {"name": "AGENT_ENGINE_ID", "value": engine_id},
                     {"name": "ASISTO_AGENT_MODEL", "value": agent_model},
+                    {"name": "STORAGE_BUCKET", "value": storage_bucket},
                 ],
             }
         ],
     },
     opts=pulumi.ResourceOptions(
-        depends_on=enabled_apis + [vertex_ai_binding],
+        depends_on=enabled_apis
+        + [
+            vertex_ai_binding,
+            firestore_binding,
+            storage_binding,
+            token_creator_binding,
+        ],
     ),
 )
 

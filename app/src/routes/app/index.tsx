@@ -1,166 +1,178 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { FileManager } from '@cubone/react-file-manager'
-import '@cubone/react-file-manager/dist/style.css'
-import { createWorkspace, deleteWorkspace, listWorkspaces } from '../../lib/api'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Filemanager, WillowDark } from '@svar-ui/react-filemanager'
+import '@svar-ui/react-filemanager/all.css'
+import {
+  createFile,
+  deleteFiles,
+  downloadFile,
+  getDriveInfo,
+  moveFiles,
+  renameFile,
+  type DriveInfo,
+} from '../../lib/api'
 import { useAuth } from '../../lib/useAuth'
-import { useAgentSocket, type WsEvent, type WsStatus } from '../../lib/useAgentSocket'
+import { useFiles } from '../../lib/useFiles'
+import { useAgentSocket, type WsEvent } from '../../lib/useAgentSocket'
 import { useAudioCapture } from '../../lib/useAudioCapture'
 import { useAudioPlayback } from '../../lib/useAudioPlayback'
-
-const Orb = lazy(() => import('../../components/Orb'))
-
-/** Decode base64 (standard or URL-safe) string to ArrayBuffer */
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  let standardBase64 = base64.replace(/-/g, '+').replace(/_/g, '/')
-  const pad = standardBase64.length % 4
-  if (pad) {
-    standardBase64 += '='.repeat(4 - pad)
-  }
-  const binaryString = atob(standardBase64)
-  const bytes = new Uint8Array(binaryString.length)
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i)
-  }
-  return bytes.buffer
-}
+import FileViewer from '../../components/FileViewer'
+import Window from '../../components/Window'
+import Orb from '../../components/Orb'
 
 export const Route = createFileRoute('/app/')({
-  component: WorkspaceExplorer,
+  component: AppPage,
 })
 
-/** Build FileManager file objects from workspace IDs.
- *  Each workspace is a folder containing a prompt.md file. */
-function workspacesToFiles(ids: string[]) {
-  const files: Array<{
-    name: string
-    isDirectory: boolean
-    path: string
-    updatedAt: string
-    size?: number
-  }> = []
+/** Cascade offset for new windows (px) */
+const CASCADE_OFFSET = 30
+const INITIAL_WIDTH = 700
+const INITIAL_HEIGHT = 500
 
-  for (const id of ids) {
-    // The workspace folder
-    files.push({
-      name: id,
-      isDirectory: true,
-      path: `/${id}`,
-      updatedAt: new Date().toISOString(),
-    })
-    // prompt.md inside each workspace
-    files.push({
-      name: 'prompt.md',
-      isDirectory: false,
-      path: `/${id}/prompt.md`,
-      updatedAt: new Date().toISOString(),
-      size: 256,
-    })
-  }
-
-  return files
-}
-
-function WorkspaceExplorer() {
+function AppPage() {
   const navigate = useNavigate()
   const { user, loading: authLoading, idToken, signOut } = useAuth()
-  const [workspaceIds, setWorkspaceIds] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
+  const [drive, setDrive] = useState<DriveInfo>({ used: 0, total: 1073741824 })
   const [error, setError] = useState<string | null>(null)
-  const [orbActive, setOrbActive] = useState(false)
-  const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null)
-  const orbActiveRef = useRef(false)
+  const idTokenRef = useRef(idToken)
 
-  // --- Audio playback (agent -> speaker) ---
-  const { play: playAudio, stop: stopPlayback, destroy: destroyPlayback, ensureInit: ensurePlaybackInit } = useAudioPlayback()
+  // Firestore realtime file subscription
+  const {
+    allFiles,
+    rootFiles,
+    getChildren,
+    loading: filesLoading,
+    error: filesError,
+  } = useFiles(user?.uid ?? null)
 
-  // --- WebSocket event handler ---
-  const handleEvent = useCallback(
+  // --- Multi-window state ---
+  // Ordered list of open file IDs (order = creation order for cascade)
+  const [openWindows, setOpenWindows] = useState<string[]>([])
+  // Counter for cascading position
+  const cascadeCountRef = useRef(0)
+
+  const openFile = useCallback((fileId: string) => {
+    setOpenWindows((prev) => {
+      if (prev.includes(fileId)) {
+        // Already open — WinBox will handle focus via its own z-index
+        // We just need to programmatically focus it
+        const el = document.getElementById(`wb-${CSS.escape(fileId)}`)
+        if (el && (el as any).winbox) {
+          ;(el as any).winbox.focus()
+        }
+        return prev
+      }
+      cascadeCountRef.current += 1
+      return [...prev, fileId]
+    })
+  }, [])
+
+  const closeWindow = useCallback((fileId: string) => {
+    setOpenWindows((prev) => prev.filter((id) => id !== fileId))
+  }, [])
+
+  // --- Agent voice connection state ---
+  const [agentActive, setAgentActive] = useState(false)
+  const [transcript, setTranscript] = useState<string>('')
+  const WORKSPACE_ID = 'default'
+
+  // WebSocket hook — direct browser-to-backend connection
+  const handleWsEvent = useCallback(
     (event: WsEvent) => {
+      // Audio data: base64 inline data → PCM playback
       const content = event.content as
-        | { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> }
+        | { parts?: Array<{ inlineData?: { data: string } }> }
         | undefined
       if (content?.parts) {
         for (const part of content.parts) {
-          if (
-            part.inlineData?.data &&
-            part.inlineData.mimeType?.startsWith('audio/')
-          ) {
-            const pcmBuffer = base64ToArrayBuffer(part.inlineData.data)
-            playAudio(pcmBuffer)
+          if (part.inlineData?.data) {
+            const raw = atob(part.inlineData.data)
+            const buf = new ArrayBuffer(raw.length)
+            const view = new Uint8Array(buf)
+            for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i)
+            playAudio(buf)
           }
         }
       }
+
+      // Transcriptions
+      const inputT = event.inputTranscription as
+        | { text?: string; finished?: boolean }
+        | undefined
+      if (inputT?.finished && inputT.text) {
+        setTranscript(inputT.text)
+      }
+      const outputT = event.outputTranscription as
+        | { text?: string; finished?: boolean }
+        | undefined
+      if (outputT?.finished && outputT.text) {
+        setTranscript(outputT.text)
+      }
+
+      // On interrupt, stop audio playback
       if (event.interrupted) {
-        stopPlayback()
+        stopAudio()
       }
     },
-    [playAudio, stopPlayback],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   )
 
-  const { status, connect, disconnect, sendAudio } = useAgentSocket({
-    workspaceId: activeWorkspace ?? '',
+  const { status: wsStatus, connect, disconnect, sendAudio } = useAgentSocket({
+    workspaceId: WORKSPACE_ID,
     token: idToken,
-    onEvent: handleEvent,
+    onEvent: handleWsEvent,
   })
 
-  // --- Audio capture (mic -> backend) ---
-  const { start: startCapture, stop: stopCapture } = useAudioCapture({
-    onChunk: useCallback(
-      (pcm: ArrayBuffer) => { sendAudio(pcm) },
-      [sendAudio],
-    ),
+  // Audio capture (mic → PCM 16kHz → WebSocket)
+  const { start: startMic, stop: stopMic, isCapturing } = useAudioCapture({
+    onChunk: sendAudio,
   })
 
-  // Clean up on unmount
+  // Audio playback (PCM 24kHz from Gemini → speaker)
+  const {
+    play: playAudio,
+    stop: stopAudio,
+    destroy: destroyAudio,
+    ensureInit: ensureAudioInit,
+  } = useAudioPlayback()
+
+  // Toggle agent: connect WS + start mic, or disconnect + stop mic
+  const toggleAgent = useCallback(async () => {
+    if (agentActive) {
+      stopMic()
+      disconnect()
+      stopAudio()
+      setAgentActive(false)
+      setTranscript('')
+    } else {
+      ensureAudioInit()
+      await connect()
+      await startMic()
+      setAgentActive(true)
+    }
+  }, [agentActive, connect, disconnect, startMic, stopMic, stopAudio, ensureAudioInit])
+
+  // Clean up audio on unmount
   useEffect(() => {
     return () => {
-      stopCapture()
-      destroyPlayback()
+      destroyAudio()
     }
-  }, [stopCapture, destroyPlayback])
+  }, [destroyAudio])
 
-  // Connect WebSocket when a workspace is active
+  // SVAR api ref for pushing realtime updates
+  const svarApiRef = useRef<any>(null)
+  const getChildrenRef = useRef(getChildren)
+  getChildrenRef.current = getChildren
+
+  // Keep refs for callbacks used inside SVAR init
+  const openFileRef = useRef(openFile)
+  openFileRef.current = openFile
+
+  // Keep token ref in sync so init callbacks always have latest token
   useEffect(() => {
-    if (idToken && activeWorkspace) {
-      connect()
-    }
-    return () => { disconnect() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idToken, activeWorkspace])
-
-  const handleOrbToggle = useCallback(() => {
-    // Can't activate the orb without a workspace
-    if (!activeWorkspace) return
-
-    const next = !orbActiveRef.current
-    orbActiveRef.current = next
-    setOrbActive(next)
-
-    if (next) {
-      void ensurePlaybackInit()
-      stopPlayback()
-      startCapture()
-    } else {
-      stopCapture()
-    }
-  }, [activeWorkspace, startCapture, stopCapture, stopPlayback, ensurePlaybackInit])
-
-  // Track which workspace folder the user is in.
-  // When navigating back to root, deactivate the orb and stop audio.
-  const handleFolderChange = useCallback((path: string) => {
-    const parts = path.split('/').filter(Boolean)
-    const wsId = parts.length > 0 ? parts[0] : null
-
-    if (!wsId && orbActiveRef.current) {
-      // Leaving a workspace — deactivate orb
-      orbActiveRef.current = false
-      setOrbActive(false)
-      stopCapture()
-    }
-
-    setActiveWorkspace(wsId)
-  }, [stopCapture])
+    idTokenRef.current = idToken
+  }, [idToken])
 
   // Redirect to sign-in if not authenticated
   useEffect(() => {
@@ -169,65 +181,144 @@ function WorkspaceExplorer() {
     }
   }, [authLoading, user, navigate])
 
-  // Fetch workspaces
-  const fetchWorkspaces = useCallback(async () => {
-    if (!idToken) return
-    try {
-      setLoading(true)
-      setError(null)
-      const data = await listWorkspaces({ data: idToken })
-      setWorkspaceIds(data.map((ws) => ws.workspace_id))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load workspaces')
-    } finally {
-      setLoading(false)
-    }
-  }, [idToken])
-
+  // Fetch drive info (not part of realtime — it's a computed aggregate)
   useEffect(() => {
-    if (idToken) {
-      fetchWorkspaces()
-    }
-  }, [idToken, fetchWorkspaces])
+    if (!idToken) return
+    getDriveInfo({ data: idToken })
+      .then((info) => setDrive(info.stats))
+      .catch((err) => console.error('[asisto] getDriveInfo error:', err))
+  }, [idToken, allFiles.length])
 
-  // Create workspace -> new folder
-  const handleCreateFolder = useCallback(
-    async (_name: string) => {
-      if (!idToken) return
-      try {
-        setError(null)
-        const ws = await createWorkspace({ data: idToken })
-        setWorkspaceIds((prev) => [...prev, ws.workspace_id])
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to create workspace')
-      }
-    },
-    [idToken],
-  )
+  // Surface realtime subscription errors
+  useEffect(() => {
+    if (filesError) setError(filesError)
+  }, [filesError])
 
-  // Delete workspace(s)
-  const handleDelete = useCallback(
-    async (files: Array<{ name: string; isDirectory: boolean; path: string }>) => {
-      if (!idToken) return
-      try {
-        setError(null)
-        for (const f of files) {
-          if (f.isDirectory) {
-            await deleteWorkspace({ data: { token: idToken, workspaceId: f.name } })
-          }
+  // --- SVAR Filemanager init callback ---
+  const initFilemanager = useCallback(
+    (api: any) => {
+      svarApiRef.current = api
+
+      // Intercept open-file BEFORE SVAR processes it — handle entirely ourselves.
+      // Return false to stop SVAR's internal event pipeline.
+      api.intercept('open-file', (ev: any) => {
+        console.log('[asisto] open-file (intercepted):', ev.id)
+        if (ev.id) {
+          openFileRef.current(ev.id)
         }
-        const deletedNames = new Set(files.map((f) => f.name))
-        setWorkspaceIds((prev) => prev.filter((id) => !deletedNames.has(id)))
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to delete workspace')
-      }
-    },
-    [idToken],
-  )
+        return false
+      })
 
-  const handleRefresh = useCallback(() => {
-    fetchWorkspaces()
-  }, [fetchWorkspaces])
+      // Lazy loading: use realtime data (no server call needed)
+      api.on('request-data', (ev: any) => {
+        console.log('[asisto] request-data:', ev.id)
+        const children = getChildrenRef.current(ev.id)
+        console.log('[asisto] provide-data:', ev.id, children.length, 'items')
+        api.exec('provide-data', { data: children, id: ev.id })
+      })
+
+      // Create file/folder
+      api.on('create-file', async (ev: any) => {
+        const token = idTokenRef.current
+        console.log('[asisto] create-file event:', JSON.stringify(ev, null, 2))
+        if (!token) {
+          console.error('[asisto] create-file: no token')
+          return
+        }
+        try {
+          const name = ev.file?.name || 'untitled'
+          const type = ev.file?.type || 'folder'
+          const parentId = ev.parent || '/'
+          console.log('[asisto] creating:', { parentId, name, type })
+          const result = await createFile({
+            data: { token, parentId, name, type },
+          })
+          console.log('[asisto] created:', result)
+        } catch (err) {
+          console.error('[asisto] create-file error:', err)
+          setError(err instanceof Error ? err.message : 'Failed to create')
+        }
+      })
+
+      // Rename
+      api.on('rename-file', async (ev: any) => {
+        const token = idTokenRef.current
+        console.log('[asisto] rename-file:', ev.id, '->', ev.name)
+        if (!token) return
+        try {
+          await renameFile({
+            data: { token, fileId: ev.id, name: ev.name },
+          })
+          console.log('[asisto] renamed ok')
+        } catch (err) {
+          console.error('[asisto] rename error:', err)
+          setError(err instanceof Error ? err.message : 'Failed to rename')
+        }
+      })
+
+      // Delete
+      api.on('delete-files', async (ev: any) => {
+        const token = idTokenRef.current
+        console.log('[asisto] delete-files:', ev.ids)
+        if (!token) return
+        try {
+          await deleteFiles({ data: { token, ids: ev.ids } })
+          console.log('[asisto] deleted ok')
+        } catch (err) {
+          console.error('[asisto] delete error:', err)
+          setError(err instanceof Error ? err.message : 'Failed to delete')
+        }
+      })
+
+      // Copy
+      api.on('copy-files', async (ev: any) => {
+        const token = idTokenRef.current
+        if (!token) return
+        try {
+          await moveFiles({
+            data: { token, ids: ev.ids, target: ev.target, copy: true },
+          })
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to copy')
+        }
+      })
+
+      // Move
+      api.on('move-files', async (ev: any) => {
+        const token = idTokenRef.current
+        if (!token) return
+        try {
+          await moveFiles({
+            data: { token, ids: ev.ids, target: ev.target, copy: false },
+          })
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to move')
+        }
+      })
+
+      // Download (context menu)
+      api.on('download-file', async (ev: any) => {
+        const token = idTokenRef.current
+        if (!token || !ev.id) return
+        try {
+          const { base64, contentType, filename } = await downloadFile({
+            data: { token, fileId: ev.id },
+          })
+          const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+          const blob = new Blob([bytes], { type: contentType })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = filename
+          a.click()
+          URL.revokeObjectURL(url)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to download')
+        }
+      })
+    },
+    [],
+  )
 
   if (authLoading || !user) {
     return (
@@ -237,16 +328,21 @@ function WorkspaceExplorer() {
     )
   }
 
-  const files = workspacesToFiles(workspaceIds)
-
   return (
     <div className="flex h-full flex-col">
       {/* Title bar */}
-      <div className="shrink-0 flex items-center justify-between border-b border-[#21262d] px-4 py-2">
+      <div className="shrink-0 flex items-center justify-between border-b border-[#30363d] px-4 py-2">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-[#58a6ff]">asisto</span>
           <span className="text-xs text-[#484f58]">/</span>
-          <span className="text-sm text-[#8b949e]">workspaces</span>
+          <span className="text-sm text-[#8b949e]">files</span>
+          {openWindows.length > 0 && (
+            <>
+              <span className="text-xs text-[#484f58]">
+                ({openWindows.length} open)
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -254,76 +350,89 @@ function WorkspaceExplorer() {
       {error && (
         <div className="shrink-0 border-b border-[#f85149]/30 bg-[#f85149]/10 px-4 py-2 text-xs text-[#f85149]">
           {error}
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="ml-3 text-[#f85149]/60 hover:text-[#f85149]"
+          >
+            dismiss
+          </button>
         </div>
       )}
 
-      {/* File manager — fills all remaining height */}
-      {loading ? (
+      {/* File manager — always full width */}
+      {filesLoading ? (
         <div className="flex flex-1 items-center justify-center">
-          <span className="text-sm text-[#484f58]">loading workspaces...</span>
+          <span className="text-sm text-[#484f58]">loading files...</span>
         </div>
       ) : (
-        <div className="relative min-h-0 flex-1">
-          <div className="fm-dark-theme h-full">
-            <FileManager
-              files={files}
-              fontFamily="'JetBrains Mono', 'Fira Code', ui-monospace, monospace"
-              primaryColor="#58a6ff"
-              height="100%"
-              width="100%"
-              layout="list"
-              enableFilePreview={false}
-              onCreateFolder={handleCreateFolder}
-              onDelete={handleDelete}
-              onRefresh={handleRefresh}
-              onFolderChange={handleFolderChange}
-              permissions={{
-                create: true,
-                delete: true,
-                upload: false,
-                move: false,
-                copy: false,
-                rename: false,
-                download: false,
-              }}
+        <div className="fm-container">
+          <WillowDark>
+            <Filemanager
+              data={allFiles}
+              drive={drive}
+              init={initFilemanager}
             />
-          </div>
-
-          {/* Orb — bottom-left corner */}
-          <div className="absolute bottom-4 left-4 z-10" style={{ width: 56, height: 56 }}>
-            <Suspense fallback={null}>
-              <Orb
-                active={orbActive}
-                disabled={!activeWorkspace}
-                onToggle={handleOrbToggle}
-                size={56}
-              />
-            </Suspense>
-          </div>
+          </WillowDark>
         </div>
       )}
 
+      {/* Floating file editor windows (WinBox portals) */}
+      {idToken &&
+        openWindows.map((fileId, index) => {
+          const filename = fileId.split('/').pop() || fileId
+          // Cascade position: offset each window slightly
+          const cascadeX = 80 + (index % 10) * CASCADE_OFFSET
+          const cascadeY = 60 + (index % 10) * CASCADE_OFFSET
+          return (
+            <Window
+              key={fileId}
+              id={fileId}
+              title={filename}
+              width={INITIAL_WIDTH}
+              height={INITIAL_HEIGHT}
+              x={cascadeX}
+              y={cascadeY}
+              minWidth={350}
+              minHeight={250}
+              onClose={closeWindow}
+              border={1}
+              top={0}
+              bottom={30}
+            >
+              <FileViewer
+                fileId={fileId}
+                token={idToken}
+                onClose={() => closeWindow(fileId)}
+              />
+            </Window>
+          )
+        })}
+
       {/* Status bar */}
-      <div className="shrink-0 flex items-center justify-between border-t border-[#21262d] px-4 py-1">
+      <div className="shrink-0 flex items-center justify-between border-t border-[#30363d] px-4 py-1">
         <div className="flex items-center gap-3">
+          {/* Spacer for orb overlap */}
+          <div className="w-14" />
           <span className="text-xs text-[#484f58]">
-            {workspaceIds.length} workspace{workspaceIds.length !== 1 ? 's' : ''}
+            {allFiles.length} item{allFiles.length !== 1 ? 's' : ''}
           </span>
-          {activeWorkspace ? (
-            <>
-              <span className="text-xs text-[#484f58]">|</span>
-              <span className="text-xs text-[#8b949e]">{activeWorkspace}</span>
-              <WsStatusIndicator status={status} />
-              {orbActive && (
-                <span className="text-xs text-[#3fb950]">listening</span>
-              )}
-            </>
-          ) : (
-            <span className="text-xs text-[#484f58] italic">no workspace selected</span>
+          {wsStatus === 'connected' && transcript && (
+            <span className="max-w-md truncate text-xs text-[#8b949e]">
+              {transcript}
+            </span>
+          )}
+          {wsStatus === 'connecting' && (
+            <span className="text-xs text-[#d29922]">connecting...</span>
+          )}
+          {wsStatus === 'error' && (
+            <span className="text-xs text-[#f85149]">connection error</span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-[#484f58]">{user.displayName || user.email}</span>
+          <span className="text-xs text-[#484f58]">
+            {user.displayName || user.email}
+          </span>
           <button
             type="button"
             onClick={signOut}
@@ -333,22 +442,15 @@ function WorkspaceExplorer() {
           </button>
         </div>
       </div>
-    </div>
-  )
-}
 
-function WsStatusIndicator({ status }: { status: WsStatus }) {
-  const color: Record<WsStatus, string> = {
-    disconnected: '#484f58',
-    connecting: '#d29922',
-    connected: '#3fb950',
-    error: '#f85149',
-  }
-  return (
-    <span
-      className="inline-block h-2 w-2 rounded-full"
-      title={status}
-      style={{ backgroundColor: color[status] }}
-    />
+      {/* Orb — bottom-left corner, always visible on top */}
+      <div className="fixed bottom-2 left-2 z-50">
+        <Orb
+          active={agentActive}
+          onToggle={toggleAgent}
+          size={56}
+        />
+      </div>
+    </div>
   )
 }

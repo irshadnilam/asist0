@@ -13,8 +13,10 @@ html,
 body,
 #app {
   min-height: 100vh;
+  height: 100vh;
   margin: 0;
   padding: 0;
+  overflow: hidden;
 }
 
 body {
@@ -28,6 +30,7 @@ body {
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -48,304 +51,574 @@ body {
   background: rgba(56, 139, 253, 0.3);
 }
 
-/* ── File Manager dark theme overrides ── */
-/* Targets actual class names from @cubone/react-file-manager */
-.fm-dark-theme {
-  --fm-bg: #0d1117;
-  --fm-surface: #161b22;
-  --fm-border: #21262d;
-  --fm-text: #c9d1d9;
-  --fm-text-muted: #8b949e;
-  --fm-text-dim: #484f58;
-  --fm-hover: rgba(255, 255, 255, 0.05);
-  --fm-selected: rgba(56, 139, 253, 0.15);
+/* --- Filemanager container: fill remaining flex height --- */
+.fm-container {
+  position: relative;
+  flex: 1 1 0%;
+  min-height: 0;
 }
 
-/* Root container */
-.fm-dark-theme .file-explorer {
-  background-color: var(--fm-bg) !important;
-  color: var(--fm-text) !important;
-  border: none !important;
-  border-radius: 0 !important;
+.fm-container > .wx-willow-dark-theme {
+  height: 100%;
 }
 
-/* Kill horizontal scrollbar white track */
-.fm-dark-theme .files::-webkit-scrollbar {
-  height: 6px;
+.fm-container .wx-filemanager {
+  height: 100% !important;
 }
 
-.fm-dark-theme .files::-webkit-scrollbar-track {
-  background: var(--fm-bg) !important;
+/* Undo Tailwind Preflight inside SVAR — Tailwind sets display:block
+   on img/svg/video which breaks SVAR's inline icon layout,
+   and border:0 which strips SVAR's border styling. */
+.wx-willow-dark-theme svg {
+  display: inline;
 }
 
-.fm-dark-theme .files::-webkit-scrollbar-thumb {
-  background: #30363d !important;
+.wx-willow-dark-theme img {
+  display: inline;
+  max-width: none;
 }
 
-/* Toolbar */
-.fm-dark-theme .toolbar {
-  background-color: var(--fm-surface) !important;
-  border-color: var(--fm-border) !important;
-  color: var(--fm-text) !important;
+.wx-willow-dark-theme *,
+.wx-willow-dark-theme *::before,
+.wx-willow-dark-theme *::after {
+  border-style: solid;
 }
 
-.fm-dark-theme .toolbar .item-action {
-  background-color: transparent !important;
-  color: var(--fm-text-muted) !important;
+/* Sidebar / toolbar dividers (SVAR uses box-shadow not borders here) */
+.wx-willow-dark-theme .wx-sidebar {
+  border-right: 1px solid #30363d;
 }
 
-.fm-dark-theme .toolbar .item-action:hover {
-  background-color: var(--fm-hover) !important;
-  color: var(--fm-text) !important;
+.wx-willow-dark-theme .wx-toolbar {
+  border-bottom: 1px solid #30363d;
 }
 
-.fm-dark-theme .toolbar .fm-toolbar .toggle-view {
-  background-color: var(--fm-surface) !important;
-  border-color: var(--fm-border) !important;
+/* =====================================================================
+   SVAR WillowDark — COMPLETE variable override: GitHub-dark IDE palette
+   =====================================================================
+   Double-class selector for higher specificity than SVAR's bundled
+   `.wx-willow-dark-theme` declarations.
+
+   Palette reference:
+     bg-primary   #0d1117   (main background)
+     bg-secondary #161b22   (panels, headers, alt surfaces)
+     bg-tertiary  #1c2128   (hover, selection highlight)
+     bg-button    #21262d   (buttons, inputs, elevated surfaces)
+     border-muted #21262d   (subtle borders)
+     border       #30363d   (standard borders, dividers)
+     fg-muted     #484f58   (disabled, placeholders)
+     fg-subtle    #8b949e   (secondary text, icons)
+     fg           #c9d1d9   (primary text)
+     fg-bright    #f0f6fc   (headings, emphasis)
+     accent       #58a6ff   (primary, links)
+     accent-hover #388bfd   (pressed states)
+     green        #3fb950   (success)
+     yellow       #d29922   (warning)
+     red          #f85149   (danger)
+     red-dark     #da3633   (danger pressed)
+   ===================================================================== */
+.wx-willow-dark-theme.wx-willow-dark-theme {
+
+  /* --- Theme identity --- */
+  --wx-theme-name: asisto-dark;
+
+  /* --- Core semantic colors --- */
+  --wx-color-primary: #58a6ff;
+  --wx-color-primary-selected: rgba(88, 166, 255, 0.15);
+  --wx-color-primary-font: #ffffff;
+  --wx-color-secondary: transparent;
+  --wx-color-secondary-hover: rgba(88, 166, 255, 0.1);
+  --wx-color-secondary-font: #58a6ff;
+  --wx-color-secondary-font-hover: #58a6ff;
+  --wx-color-secondary-border: #58a6ff;
+  --wx-color-secondary-border-disabled: #484f58;
+  --wx-color-success: #3fb950;
+  --wx-color-warning: #d29922;
+  --wx-color-info: #58a6ff;
+  --wx-color-danger: #f85149;
+  --wx-color-link: #58a6ff;
+  --wx-color-disabled: #21262d;
+  --wx-color-disabled-alt: #30363d;
+
+  /* --- Font colors --- */
+  --wx-color-font: #c9d1d9;
+  --wx-color-font-alt: #8b949e;
+  --wx-color-font-disabled: #484f58;
+
+  /* --- Backgrounds --- */
+  --wx-background: #0d1117;
+  --wx-background-alt: #161b22;
+  --wx-background-hover: #1c2128;
+
+  /* --- Borders --- */
+  --wx-border: 1px solid #30363d;
+  --wx-border-light: 1px solid #21262d;
+  --wx-border-medium: 1px solid #30363d;
+  --wx-border-radius: 4px;
+
+  /* --- Shadows --- */
+  --wx-shadow-light: 0 4px 20px rgba(0, 0, 0, 0.3);
+  --wx-shadow-medium: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --wx-box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --wx-box-shadow-strong: 0 4px 24px rgba(0, 0, 0, 0.5),
+    0 4px 8px rgba(0, 0, 0, 0.3);
+
+  /* --- Icons --- */
+  --wx-icon-color: #8b949e;
+  --wx-icon-size: var(--wx-line-height);
+
+  /* --- Typography --- */
+  --wx-font-family: "JetBrains Mono", "Fira Code", "SF Mono", ui-monospace,
+    monospace;
+  --wx-font-size: 13px;
+  --wx-font-size-hd: 15px;
+  --wx-font-size-md: 13px;
+  --wx-font-size-sm: 11px;
+  --wx-font-weight: 400;
+  --wx-font-weight-md: 500;
+  --wx-font-weight-b: 600;
+  --wx-header-font-weight: 500;
+  --wx-line-height: 20px;
+  --wx-line-height-hd: 28px;
+  --wx-line-height-md: 24px;
+  --wx-line-height-sm: 16px;
+  --wx-padding: 8px;
+  --wx-radius-major: 6px;
+
+  /* --- Fields --- */
+  --wx-field-gutter: 16px;
+  --wx-field-width: 400px;
+
+  /* --- Labels --- */
+  --wx-label-font-color: #c9d1d9;
+  --wx-label-font-family: var(--wx-font-family);
+  --wx-label-font-size: var(--wx-font-size);
+  --wx-label-font-weight: var(--wx-font-weight-md);
+  --wx-label-line-height: var(--wx-line-height);
+  --wx-label-margin: 0 0 4px;
+  --wx-label-padding: 0;
+  --wx-label-width: 100px;
+
+  /* --- Inputs --- */
+  --wx-input-background: #0d1117;
+  --wx-input-background-disabled: #21262d;
+  --wx-input-border: 1px solid #30363d;
+  --wx-input-border-focus: 1px solid #58a6ff;
+  --wx-input-border-disabled: 1px solid #21262d;
+  --wx-input-border-radius: 4px;
+  --wx-input-font-color: #c9d1d9;
+  --wx-input-font-family: var(--wx-font-family);
+  --wx-input-font-size: var(--wx-font-size);
+  --wx-input-font-weight: var(--wx-font-weight);
+  --wx-input-line-height: var(--wx-line-height);
+  --wx-input-text-align: left;
+  --wx-input-height: 32px;
+  --wx-input-width: 100%;
+  --wx-input-padding: 5px 8px;
+  --wx-input-placeholder-color: #484f58;
+  --wx-input-icon-color: #8b949e;
+  --wx-input-icon-indent: 6px;
+  --wx-input-icon-size: var(--wx-icon-size);
+
+  /* --- Buttons --- */
+  --wx-button-background: #21262d;
+  --wx-button-font-color: #c9d1d9;
+  --wx-button-font-family: var(--wx-font-family);
+  --wx-button-font-size: var(--wx-font-size-md);
+  --wx-button-font-weight: var(--wx-font-weight-md);
+  --wx-button-line-height: var(--wx-line-height);
+  --wx-button-border: 1px solid #30363d;
+  --wx-button-border-radius: var(--wx-border-radius);
+  --wx-button-height: 32px;
+  --wx-button-padding: 5px 16px;
+  --wx-button-icon-indent: 5px;
+  --wx-button-icon-size: 20px;
+  --wx-button-text-transform: none;
+  --wx-button-pressed: #161b22;
+  --wx-button-primary-pressed: #388bfd;
+  --wx-button-danger-font-color: #ffffff;
+  --wx-button-danger-pressed: #da3633;
+  --wx-button-box-shadow: none;
+  --wx-button-primary-box-shadow: none;
+
+  /* --- Checkboxes --- */
+  --wx-checkbox-border-color: #8b949e;
+  --wx-checkbox-border-color-disabled: #21262d;
+  --wx-checkbox-border-radius: var(--wx-input-border-radius);
+  --wx-checkbox-border-width: 2px;
+  --wx-checkbox-font-color: #c9d1d9;
+  --wx-checkbox-font-family: var(--wx-font-family);
+  --wx-checkbox-font-size: var(--wx-font-size);
+  --wx-checkbox-font-weight: var(--wx-font-weight);
+  --wx-checkbox-height: var(--wx-line-height);
+  --wx-checkbox-line-height: var(--wx-line-height);
+  --wx-checkbox-size: var(--wx-checkbox-height);
+
+  /* --- Multi-combo tags --- */
+  --wx-multicombo-tag-background: #161b22;
+  --wx-multicombo-tag-border: none;
+  --wx-multicombo-tag-border-radius: var(--wx-input-border-radius);
+  --wx-multicombo-tag-gap: 3px;
+  --wx-multicombo-tag-pading: 2px 8px;
+
+  /* --- Switch --- */
+  --wx-switch-background: #30363d;
+  --wx-switch-border-color: transparent;
+  --wx-switch-border-color-disabled: transparent;
+  --wx-switch-border-width: 0px;
+  --wx-switch-height: 24px;
+  --wx-switch-width: 48px;
+  --wx-switch-primary: #58a6ff;
+  --wx-switch-thumb-background: rgba(255, 255, 255, 0.9);
+  --wx-switch-thumb-background-disabled: #21262d;
+  --wx-switch-thumb-border: none;
+  --wx-switch-thumb-border-disabled: 1px solid rgba(255, 255, 255, 0.7);
+  --wx-switch-thumb-offset: 1px;
+  --wx-switch-thumb-shadow: none;
+
+  /* --- Slider --- */
+  --wx-slider-background: #161b22;
+  --wx-slider-height: 14px;
+  --wx-slider-primary: #58a6ff;
+  --wx-slider-thumb-border: none;
+  --wx-slider-thumb-border-disabled: 1px solid #21262d;
+  --wx-slider-thumb-shadow: none;
+  --wx-slider-thumb-size: var(--wx-slider-height);
+  --wx-slider-track-border-radius: 2px;
+  --wx-slider-track-height: 4px;
+  --wx-slider-label-font-color: #c9d1d9;
+  --wx-slider-label-font-family: var(--wx-font-family);
+  --wx-slider-label-font-size: var(--wx-font-size);
+  --wx-slider-label-font-weight: var(--wx-font-weight-md);
+  --wx-slider-label-line-height: var(--wx-line-height);
+  --wx-slider-label-margin: 0 0 5px;
+
+  /* --- Calendar --- */
+  --wx-calendar-border-radius: var(--wx-border-radius);
+  --wx-calendar-cell-size: 32px;
+  --wx-calendar-controls-font-color: #c9d1d9;
+  --wx-calendar-controls-font-family: var(--wx-button-font-family);
+  --wx-calendar-controls-font-size: var(--wx-font-size);
+  --wx-calendar-controls-font-weight: var(--wx-font-weight);
+  --wx-calendar-controls-line-height: var(--wx-line-height);
+  --wx-calendar-font-color: #c9d1d9;
+  --wx-calendar-font-family: var(--wx-font-family);
+  --wx-calendar-font-size: var(--wx-font-size);
+  --wx-calendar-font-weight: var(--wx-font-weight);
+  --wx-calendar-gap: 4px;
+  --wx-calendar-header-font-size: var(--wx-font-size);
+  --wx-calendar-header-font-weight: var(--wx-font-weight-md);
+  --wx-calendar-header-line-height: var(--wx-line-height);
+  --wx-calendar-icon-color: #8b949e;
+  --wx-calendar-icon-size: var(--wx-icon-size);
+  --wx-calendar-line-gap: 4px;
+  --wx-calendar-line-height: var(--wx-line-height);
+  --wx-calendar-padding: 16px;
+
+  /* --- Popup --- */
+  --wx-popup-background: #161b22;
+  --wx-popup-border: 1px solid #30363d;
+  --wx-popup-border-radius: var(--wx-border-radius);
+  --wx-popup-shadow: var(--wx-shadow-light);
+  --wx-popup-z-index: 100;
+
+  /* --- Modal --- */
+  --wx-modal-background: #161b22;
+  --wx-modal-border: 1px solid #30363d;
+  --wx-modal-border-radius: var(--wx-border-radius);
+  --wx-modal-backdrop: rgba(0, 0, 0, 0.6);
+  --wx-modal-gutter: 14px;
+  --wx-modal-padding: 16px 20px;
+  --wx-modal-shadow: var(--wx-shadow-medium);
+  --wx-modal-width: 280px;
+  --wx-modal-z-index: 1000;
+  --wx-modal-header-font-color: #f0f6fc;
+  --wx-modal-header-font-family: var(--wx-font-family);
+  --wx-modal-header-font-size: var(--wx-font-size-hd);
+  --wx-modal-header-font-weight: var(--wx-font-weight-b);
+  --wx-modal-header-line-height: var(--wx-line-height-hd);
+
+  /* --- Notice / Toast --- */
+  --wx-notice-background: #161b22;
+  --wx-notice-border: none;
+  --wx-notice-border-radius: 0 var(--wx-border-radius) var(--wx-border-radius) 0;
+  --wx-notice-font-color: #c9d1d9;
+  --wx-notice-font-family: var(--wx-font-family);
+  --wx-notice-font-size: var(--wx-font-size);
+  --wx-notice-font-weight: var(--wx-font-weight);
+  --wx-notice-line-height: var(--wx-line-height);
+  --wx-notice-icon-color: #8b949e;
+  --wx-notice-icon-size: var(--wx-icon-size);
+  --wx-notice-margin: 6px 12px;
+  --wx-notice-padding: 14px;
+  --wx-notice-shadow: var(--wx-shadow-medium);
+  --wx-notice-width: 240px;
+  --wx-notice-z-index: 1010;
+  --wx-notice-type-background-opacity: 0;
+  --wx-notice-type-border-color: #8b949e;
+  --wx-notice-type-border-width: 4px;
+  --wx-notice-type-close-hover-opacity: 1;
+  --wx-notice-type-font-color: #c9d1d9;
+  --wx-notice-type-icon-color: #8b949e;
+
+  /* --- Table / Grid --- */
+  --wx-table-border: 1px solid #30363d;
+  --wx-table-cell-border: 1px solid #30363d;
+  --wx-table-header-background: #161b22;
+  --wx-table-header-border: 1px solid #30363d;
+  --wx-table-header-cell-border: 1px solid #30363d;
+  --wx-table-footer-cell-border: 1px solid #30363d;
+  --wx-table-select-background: #1c2128;
+  --wx-table-select-border: inset 3px 0 #58a6ff;
+  --wx-table-select-color: #c9d1d9;
+  --wx-table-fixed-column-border: 3px solid #30363d;
+  --wx-table-drag-over-background: #1c2128;
+  --wx-table-drag-zone-shadow: 0 1px 2px #1c2128, 0 3px 10px #1c2128;
+  --wx-table-editor-dropdown-border: 1px solid #30363d;
+  --wx-table-editor-dropdown-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+
+  /* --- Tabs --- */
+  --wx-tabs-background: #0d1117;
+  --wx-tabs-background-hover: transparent;
+  --wx-tabs-active-background: transparent;
+  --wx-tabs-active-color: #58a6ff;
+  --wx-tabs-active-border: #58a6ff;
+  --wx-tabs-hover-border: #484f58;
+  --wx-tabs-border-radius: var(--wx-border-radius);
+  --wx-tabs-border-width: 1px;
+  --wx-tabs-cell-min-width: 100px;
+  --wx-tabs-divider-color: #30363d;
+  --wx-tabs-divider-height: 60%;
+  --wx-tabs-divider-width: 1px;
+
+  /* --- Segmented --- */
+  --wx-segmented-background: #161b22;
+  --wx-segmented-background-hover: #1c2128;
+  --wx-segmented-border: none;
+  --wx-segmented-border-radius: 6px;
+  --wx-segmented-padding: 0px;
+
+  /* --- Filemanager-specific --- */
+  --wx-fm-background: #0d1117;
+  --wx-fm-box-shadow: none;
+  --wx-fm-select-background: #1c2128;
+  --wx-fm-grid-border: 1px solid #30363d;
+  --wx-fm-grid-header-color: #161b22;
+  --wx-fm-button-font-color: #8b949e;
+  --wx-fm-toolbar-height: 44px;
+  --wx-fm-progress-bar-color: #58a6ff;
 }
 
-.fm-dark-theme .toolbar .fm-toolbar .toggle-view ul li {
-  color: var(--fm-text) !important;
+/* --- Markdown preview styling (GitHub-dark) --- */
+.prose-dark {
+  color: #c9d1d9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.prose-dark h1, .prose-dark h2, .prose-dark h3,
+.prose-dark h4, .prose-dark h5, .prose-dark h6 {
+  color: #e6edf3;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+.prose-dark h1 { font-size: 1.75em; border-bottom: 1px solid #21262d; padding-bottom: 0.3em; }
+.prose-dark h2 { font-size: 1.4em; border-bottom: 1px solid #21262d; padding-bottom: 0.3em; }
+.prose-dark h3 { font-size: 1.15em; }
+.prose-dark p { margin: 0.75em 0; }
+.prose-dark a { color: #58a6ff; text-decoration: none; }
+.prose-dark a:hover { text-decoration: underline; }
+.prose-dark code {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0.15em 0.35em;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.9em;
+}
+.prose-dark pre {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px 16px;
+  overflow-x: auto;
+}
+.prose-dark pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.prose-dark blockquote {
+  border-left: 3px solid #30363d;
+  color: #8b949e;
+  padding-left: 1em;
+  margin: 0.75em 0;
+}
+.prose-dark ul, .prose-dark ol { padding-left: 1.5em; margin: 0.5em 0; }
+.prose-dark li { margin: 0.25em 0; }
+.prose-dark hr { border: none; border-top: 1px solid #21262d; margin: 1.5em 0; }
+.prose-dark table { border-collapse: collapse; width: 100%; margin: 0.75em 0; }
+.prose-dark th, .prose-dark td {
+  border: 1px solid #30363d;
+  padding: 6px 12px;
+  text-align: left;
+}
+.prose-dark th { background: #161b22; font-weight: 600; }
+.prose-dark img { max-width: 100%; border-radius: 6px; }
+
+/* ============================================================
+   WinBox — IDE dark theme overrides
+   ============================================================ */
+
+/* Window frame */
+.winbox.asisto-window {
+  background: #161b22;
+  border-radius: 8px 8px 0 0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px #30363d;
+}
+.winbox.asisto-window.max {
+  border-radius: 0;
 }
 
-.fm-dark-theme .toolbar .fm-toolbar .toggle-view ul li:hover {
-  background-color: var(--fm-hover) !important;
+/* Header / title bar */
+.winbox.asisto-window .wb-header {
+  background: #161b22;
+}
+.winbox.asisto-window .wb-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #8b949e;
+  padding-left: 12px;
+}
+.winbox.asisto-window.focus .wb-title {
+  color: #c9d1d9;
+}
+.winbox.asisto-window .wb-drag {
+  cursor: grab;
+}
+.winbox.asisto-window .wb-drag:active {
+  cursor: grabbing;
 }
 
-.fm-dark-theme .toolbar .item-separator {
-  border-color: var(--fm-border) !important;
+/* ---- Control buttons (close / max / min) ---- */
+.winbox.asisto-window .wb-control {
+  filter: none;
+}
+.winbox.asisto-window .wb-control * {
+  width: 36px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  opacity: 0.7;
+}
+.winbox.asisto-window .wb-control *:hover {
+  opacity: 1;
 }
 
-/* Breadcrumb */
-.fm-dark-theme .bread-crumb-container {
-  background-color: var(--fm-surface) !important;
-  border-color: var(--fm-border) !important;
+/* Close — red accent */
+.winbox.asisto-window .wb-close {
+  /* X icon in #f85149 (red) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-1 -1 18 18'%3E%3Cpath fill='%23f85149' d='m1.613.21.094.083L8 6.585 14.293.293l.094-.083a1 1 0 0 1 1.403 1.403l-.083.094L9.415 8l6.292 6.293a1 1 0 0 1-1.32 1.497l-.094-.083L8 9.415l-6.293 6.292-.094.083A1 1 0 0 1 .21 14.387l.083-.094L6.585 8 .293 1.707A1 1 0 0 1 1.613.21z'/%3E%3C/svg%3E");
+  background-size: 12px auto;
+  background-position: center;
+}
+.winbox.asisto-window .wb-close:hover {
+  background-color: #f8514933;
 }
 
-.fm-dark-theme .bread-crumb-container .breadcrumb .folder-name {
-  color: var(--fm-text-muted) !important;
+/* Maximize — blue accent */
+.winbox.asisto-window .wb-max {
+  /* Two-square icon in #58a6ff (blue) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%2358a6ff' viewBox='0 0 96 96'%3E%3Cpath d='M20 71.311C15.34 69.67 12 65.23 12 60V20c0-6.63 5.37-12 12-12h40c5.23 0 9.67 3.34 11.311 8H24c-2.21 0-4 1.79-4 4v51.311z'/%3E%3Cpath d='M92 76V36c0-6.63-5.37-12-12-12H40c-6.63 0-12 5.37-12 12v40c0 6.63 5.37 12 12 12h40c6.63 0 12-5.37 12-12zm-52 4c-2.21 0-4-1.79-4-4V36c0-2.21 1.79-4 4-4h40c2.21 0 4 1.79 4 4v40c0 2.21-1.79 4-4 4H40z'/%3E%3C/svg%3E");
+  background-size: 14px auto;
+  background-position: center;
+}
+.winbox.asisto-window .wb-max:hover {
+  background-color: #58a6ff22;
 }
 
-.fm-dark-theme .bread-crumb-container .breadcrumb .folder-name:hover,
-.fm-dark-theme .bread-crumb-container .breadcrumb .folder-name-btn:hover {
-  color: #58a6ff !important;
-  background-color: transparent !important;
+/* Minimize — muted accent */
+.winbox.asisto-window .wb-min {
+  /* Dash icon in #8b949e (muted gray) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 2'%3E%3Cpath fill='%238b949e' d='M8 0h7a1 1 0 0 1 0 2H1a1 1 0 0 1 0-2h7z'/%3E%3C/svg%3E");
+  background-size: 12px auto;
+  background-position: center calc(50% + 6px);
+}
+.winbox.asisto-window .wb-min:hover {
+  background-color: #8b949e22;
 }
 
-.fm-dark-theme .bread-crumb-container .breadcrumb .divider {
-  background: var(--fm-border) !important;
+/* Unfocused — dim controls further */
+.winbox.asisto-window:not(.focus) .wb-control * {
+  opacity: 0.35;
+}
+.winbox.asisto-window:not(.focus) .wb-control *:hover {
+  opacity: 0.7;
 }
 
-.fm-dark-theme .bread-crumb-container .hidden-folders-container {
-  background-color: var(--fm-surface) !important;
-  border-color: var(--fm-border) !important;
+/* Window body */
+.winbox.asisto-window .wb-body {
+  margin: 1px;
+  background: #0d1117;
+  color: #c9d1d9;
+  overflow: hidden;
 }
 
-/* Files container (holds nav pane + file list) */
-.fm-dark-theme .files-container {
-  background-color: var(--fm-bg) !important;
+/* Focus state — blue border glow */
+.winbox.asisto-window.focus {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px #58a6ff55;
 }
 
-/* Navigation pane (left sidebar with folder tree) */
-.fm-dark-theme .navigation-pane {
-  background-color: var(--fm-bg) !important;
-  border-color: var(--fm-border) !important;
+/* Unfocused state — dim */
+.winbox.asisto-window:not(.focus) {
+  opacity: 0.92;
+}
+.winbox.asisto-window:not(.focus) .wb-header {
+  background: #0d1117;
 }
 
-.fm-dark-theme .navigation-pane .sb-folders-list {
-  background-color: var(--fm-bg) !important;
+/* Minimized state */
+.winbox.asisto-window.min {
+  border-radius: 4px;
 }
 
-.fm-dark-theme .sb-folders-list-item {
-  color: var(--fm-text-muted) !important;
+/* Hide fullscreen button (not needed for file editors) */
+.winbox.asisto-window .wb-full {
+  display: none;
 }
 
-.fm-dark-theme .sb-folders-list-item:hover {
-  background-color: var(--fm-hover) !important;
+/* Resize handle styling */
+.winbox.asisto-window .wb-n,
+.winbox.asisto-window .wb-s,
+.winbox.asisto-window .wb-e,
+.winbox.asisto-window .wb-w,
+.winbox.asisto-window .wb-nw,
+.winbox.asisto-window .wb-ne,
+.winbox.asisto-window .wb-sw,
+.winbox.asisto-window .wb-se {
+  z-index: 1;
 }
 
-.fm-dark-theme .sb-folders-list-item .sb-folder-name {
-  color: var(--fm-text-muted) !important;
+/* ---- Blue-tinted scrollbars inside WinBox ---- */
+.winbox.asisto-window .wb-body ::-webkit-scrollbar,
+.winbox.asisto-window .wb-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
-
-.fm-dark-theme .sb-folders-list .active-list-item {
-  background-color: var(--fm-selected) !important;
-  color: #58a6ff !important;
+.winbox.asisto-window .wb-body ::-webkit-scrollbar-track,
+.winbox.asisto-window .wb-body::-webkit-scrollbar-track {
+  background: transparent;
 }
-
-.fm-dark-theme .sb-folders-list .active-list-item .sb-folder-name {
-  color: #58a6ff !important;
+.winbox.asisto-window .wb-body ::-webkit-scrollbar-thumb,
+.winbox.asisto-window .wb-body::-webkit-scrollbar-thumb {
+  background: #58a6ff33;
+  border-radius: 4px;
 }
-
-.fm-dark-theme .sb-folders-list .active-list-item:hover {
-  background-color: var(--fm-selected) !important;
+.winbox.asisto-window .wb-body ::-webkit-scrollbar-thumb:hover,
+.winbox.asisto-window .wb-body::-webkit-scrollbar-thumb:hover {
+  background: #58a6ff66;
 }
-
-.fm-dark-theme .sidebar-resize {
-  background-color: var(--fm-border) !important;
-}
-
-.fm-dark-theme .empty-nav-pane {
-  color: var(--fm-text-dim) !important;
-}
-
-/* Files list view */
-.fm-dark-theme .files {
-  background-color: var(--fm-bg) !important;
-}
-
-.fm-dark-theme .files-header {
-  background-color: var(--fm-surface) !important;
-  border-color: var(--fm-border) !important;
-}
-
-.fm-dark-theme .files-header .file-name,
-.fm-dark-theme .files-header .file-date,
-.fm-dark-theme .files-header .file-size,
-.fm-dark-theme .files-header .file-select-all {
-  color: var(--fm-text-muted) !important;
-  background-color: transparent !important;
-  border-color: var(--fm-border) !important;
-}
-
-.fm-dark-theme .files-header .file-name:hover,
-.fm-dark-theme .files-header .file-date:hover,
-.fm-dark-theme .files-header .file-size:hover {
-  background-color: var(--fm-hover) !important;
-}
-
-.fm-dark-theme .files-header .file-name.active,
-.fm-dark-theme .files-header .file-date.active,
-.fm-dark-theme .files-header .file-size.active {
-  background-color: rgba(56, 139, 253, 0.08) !important;
-  color: #58a6ff !important;
-}
-
-/* File items */
-.fm-dark-theme .file-item-container {
-  color: var(--fm-text) !important;
-  border-color: var(--fm-border) !important;
-}
-
-.fm-dark-theme .file-item-container:hover {
-  background-color: var(--fm-hover) !important;
-}
-
-.fm-dark-theme .file-item-container.file-selected {
-  background-color: var(--fm-selected) !important;
-}
-
-.fm-dark-theme .file-item-container.file-selected:hover {
-  background-color: rgba(56, 139, 253, 0.25) !important;
-}
-
-.fm-dark-theme .file-item .file-name {
-  color: var(--fm-text) !important;
-}
-
-.fm-dark-theme .file-item .modified-date {
-  color: var(--fm-text-dim) !important;
-}
-
-.fm-dark-theme .file-item .size {
-  color: var(--fm-text-dim) !important;
-}
-
-/* Empty folder message */
-.fm-dark-theme .empty-folder {
-  color: var(--fm-text-dim) !important;
-}
-
-/* Context menu */
-.fm-dark-theme .fm-context-menu {
-  background-color: var(--fm-surface) !important;
-  border-color: var(--fm-border) !important;
-  color: var(--fm-text) !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
-}
-
-.fm-dark-theme .fm-context-menu .file-context-menu-list ul li {
-  color: var(--fm-text) !important;
-}
-
-.fm-dark-theme .fm-context-menu .file-context-menu-list ul li:hover {
-  background-color: var(--fm-hover) !important;
-}
-
-.fm-dark-theme .fm-context-menu .file-context-menu-list .divider {
-  border-color: var(--fm-border) !important;
-}
-
-.fm-dark-theme .fm-context-menu .file-context-menu-list .sub-menu {
-  background-color: var(--fm-surface) !important;
-  border-color: var(--fm-border) !important;
-  color: var(--fm-text) !important;
-}
-
-/* Modal dialogs */
-.fm-dark-theme .fm-modal {
-  background-color: var(--fm-surface) !important;
-  color: var(--fm-text) !important;
-}
-
-.fm-dark-theme .fm-modal-header {
-  color: var(--fm-text) !important;
-}
-
-/* Checkbox */
-.fm-dark-theme .fm-checkbox {
-  accent-color: #58a6ff !important;
-}
-
-/* Scrollbar inside file manager */
-.fm-dark-theme ::-webkit-scrollbar-track {
-  background: var(--fm-bg);
-}
-
-.fm-dark-theme ::-webkit-scrollbar-thumb {
-  background: #30363d;
-}
-
-/* Catch-all: force dark borders on all children */
-.fm-dark-theme .file-explorer *,
-.fm-dark-theme .file-explorer section {
-  border-color: var(--fm-border) !important;
-}
-
-/* Nuclear option: kill any remaining white/light backgrounds anywhere in the tree */
-.fm-dark-theme,
-.fm-dark-theme .file-explorer,
-.fm-dark-theme .file-explorer > *,
-.fm-dark-theme .files-container,
-.fm-dark-theme .files-container > *,
-.fm-dark-theme .files,
-.fm-dark-theme .navigation-pane {
-  background-color: var(--fm-bg) !important;
-}
-
-/* Surface-level elements get the slightly lighter dark */
-.fm-dark-theme .toolbar,
-.fm-dark-theme .bread-crumb-container,
-.fm-dark-theme .files-header {
-  background-color: var(--fm-surface) !important;
-}
-
-/* Kill any stray borders (especially the bottom white border) */
-.fm-dark-theme .file-explorer,
-.fm-dark-theme .file-explorer > div,
-.fm-dark-theme .file-explorer > section,
-.fm-dark-theme .files-container {
-  border: none !important;
-  border-radius: 0 !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-/* Ensure no element in the tree has a white or light background */
-.fm-dark-theme .file-explorer div,
-.fm-dark-theme .file-explorer section,
-.fm-dark-theme .file-explorer span,
-.fm-dark-theme .file-explorer ul,
-.fm-dark-theme .file-explorer li {
-  background-color: inherit;
+.winbox.asisto-window .wb-body ::-webkit-scrollbar-corner,
+.winbox.asisto-window .wb-body::-webkit-scrollbar-corner {
+  background: transparent;
 }
